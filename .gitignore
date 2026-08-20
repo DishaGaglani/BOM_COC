@@ -1,0 +1,16 @@
+# Confidential source documents — never pushed
+/AI_BOM_COC_Semantic_Validation_Architecture.docx
+/Gmail - RE_ COC with BOM verification_Review tool.pdf
+/review/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Claude Code session state
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db

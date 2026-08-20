@@ -1,0 +1,121 @@
+:root {
+  /* Light mode: engineering computation-pad paper — pale green, faint grid */
+  --paper: #eaf1e8;
+  --paper-raised: #f7fbf6;
+  --ink: #16261c;
+  --ink-muted: #4a5c4f;
+  --line: rgba(22, 38, 28, 0.14);
+  --line-soft: rgba(22, 38, 28, 0.07);
+
+  --accent: #1b4c8c;
+  --accent-soft: rgba(27, 76, 140, 0.09);
+  --accent-ink: #ffffff;
+
+  --pass: #1e7a42;
+  --pass-bg: rgba(30, 122, 66, 0.1);
+  --fail: #a23327;
+  --fail-bg: rgba(162, 51, 39, 0.1);
+  --warn: #9c6b08;
+  --warn-bg: rgba(156, 107, 8, 0.1);
+
+  --shadow: 0 1px 2px rgba(22, 38, 28, 0.06), 0 8px 24px rgba(22, 38, 28, 0.06);
+
+  --display: 'IBM Plex Sans Condensed', 'Arial Narrow', sans-serif;
+  --sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, Consolas, monospace;
+
+  font: 16px/1.5 var(--sans);
+  color-scheme: light dark;
+  color: var(--ink-muted);
+  background: var(--paper);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    /* Dark mode: an actual blueprint — deep navy, cyan linework */
+    --paper: #10233a;
+    --paper-raised: #142c47;
+    --ink: #eaf3fc;
+    --ink-muted: #9fb8d4;
+    --line: rgba(234, 243, 252, 0.14);
+    --line-soft: rgba(234, 243, 252, 0.06);
+
+    --accent: #6fb1ff;
+    --accent-soft: rgba(111, 177, 255, 0.14);
+    --accent-ink: #0b1c2f;
+
+    --pass: #4cc98a;
+    --pass-bg: rgba(76, 201, 138, 0.14);
+    --fail: #ff6b5c;
+    --fail-bg: rgba(255, 107, 92, 0.14);
+    --warn: #e8b94d;
+    --warn-bg: rgba(232, 185, 77, 0.14);
+
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.3);
+  }
+}
+
+:root[data-theme='dark'] {
+  --paper: #10233a;
+  --paper-raised: #142c47;
+  --ink: #eaf3fc;
+  --ink-muted: #9fb8d4;
+  --line: rgba(234, 243, 252, 0.14);
+  --line-soft: rgba(234, 243, 252, 0.06);
+
+  --accent: #6fb1ff;
+  --accent-soft: rgba(111, 177, 255, 0.14);
+  --accent-ink: #0b1c2f;
+
+  --pass: #4cc98a;
+  --pass-bg: rgba(76, 201, 138, 0.14);
+  --fail: #ff6b5c;
+  --fail-bg: rgba(255, 107, 92, 0.14);
+  --warn: #e8b94d;
+  --warn-bg: rgba(232, 185, 77, 0.14);
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background:
+    linear-gradient(var(--line-soft) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line-soft) 1px, transparent 1px);
+  background-size: 28px 28px;
+  background-color: var(--paper);
+  min-height: 100svh;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--display);
+  font-weight: 600;
+  color: var(--ink);
+  margin: 0;
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: var(--accent);
+}
+
+button {
+  font-family: inherit;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
