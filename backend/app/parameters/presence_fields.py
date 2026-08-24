@@ -1,6 +1,7 @@
 import re
 
-from app.schemas.canonical import RawTextBlock, ExtractedField
+from app.parameters.schema import ExtractedField
+from app.parsing.schema import ParsedElement
 
 # Keyword presence checks for COC compliance elements that can't be pulled as
 # a clean label:value pair — signatures/seals are visual marks, not table
@@ -17,17 +18,16 @@ PRESENCE_PATTERNS: dict[str, re.Pattern] = {
 }
 
 
-def extract_presence_fields(blocks: list[RawTextBlock]) -> list[ExtractedField]:
-    """Flags compliance elements mentioned anywhere in the document's text,
-    keeping the source block's bbox so a match can still be highlighted."""
+def extract_presence_fields(elements: list[ParsedElement]) -> list[ExtractedField]:
+    """Flags compliance elements mentioned anywhere in the document's text."""
     fields: list[ExtractedField] = []
     found: set[str] = set()
 
-    for block in blocks:
+    for el in elements:
         for field_name, pattern in PRESENCE_PATTERNS.items():
             if field_name in found:
                 continue
-            m = pattern.search(block.text)
+            m = pattern.search(el.text)
             if not m:
                 continue
             found.add(field_name)
@@ -35,10 +35,9 @@ def extract_presence_fields(blocks: list[RawTextBlock]) -> list[ExtractedField]:
                 ExtractedField(
                     field_name=field_name,
                     field_value=m.group(0).strip(),
-                    confidence=block.confidence,
-                    page=block.page,
-                    bbox=block.bbox,
-                    extraction_method="rule",
+                    page_number=el.page_number,
+                    bbox=el.bbox,
+                    extraction_method="presence",
                 )
             )
 

@@ -1,6 +1,6 @@
 # Document-term -> canonical field map (architecture doc section 9).
-# Used as a deterministic fallback/cross-check alongside LLM extraction,
-# and to pre-label raw blocks before they're sent to the model.
+# Verified against real L&T BOM/COC samples during the original Phase 1
+# build; carried forward unchanged into the unstructured.io-based rewrite.
 
 FIELD_SYNONYMS: dict[str, str] = {
     "part no": "part_id",
@@ -12,11 +12,10 @@ FIELD_SYNONYMS: dict[str, str] = {
     "component no.": "part_id",
     "item code": "part_id",
 
-    # Customer's own catalog number. Verified against real L&T BOM/COC
-    # samples: suppliers echo this back as "Item No." or "CPN" (Customer
-    # Part Number) far more reliably than the manufacturer's own "Part No.",
-    # so these outrank the part_id synonyms above — see
-    # table_headers.FIELD_LABEL_PRIORITY.
+    # Customer's own catalog number. Suppliers echo this back as "Item No."
+    # or "CPN" (Customer Part Number) far more reliably than the
+    # manufacturer's own "Part No.", so these outrank the part_id synonyms
+    # above — see table_headers.FIELD_LABEL_PRIORITY.
     "l&t cat no": "part_id",
     "l&t cat no.": "part_id",
     "item no": "part_id",

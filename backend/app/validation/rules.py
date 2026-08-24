@@ -14,18 +14,16 @@ class RuleResult:
     reason: str
 
 
-def check_document_type(coc_field_value: str | None) -> RuleResult:
-    """Requirement #1: determine whether the uploaded document is a COC at all."""
-    if coc_field_value and "coc" in coc_field_value.lower():
-        return RuleResult("document_type", "COC", coc_field_value, "PASS", "Document classified as COC")
-    if coc_field_value:
+def check_identity_field_presence(po: str | None, serial: str | None) -> RuleResult:
+    """'One of PO Number or Serial Number should be present.'"""
+    if po or serial:
         return RuleResult(
-            "document_type", "COC", coc_field_value, "FAIL",
-            f"Document classified as '{coc_field_value}', not a COC",
+            "identity_field_presence", "PO Number or Serial Number", po or serial, "PASS",
+            "At least one identity field present",
         )
     return RuleResult(
-        "document_type", "COC", None, "WARNING",
-        "Could not confidently classify document type — manual review required",
+        "identity_field_presence", "PO Number or Serial Number", None, "FAIL",
+        "Neither PO Number nor Serial Number found on COC",
     )
 
 
@@ -75,29 +73,16 @@ def check_presence(parameter: str, found_value: str | None) -> RuleResult:
     )
 
 
-def check_identity_field_presence(po: str | None, serial: str | None) -> RuleResult:
-    """Requirements #2/#5: 'one of PO Number or Serial Number should be present.'"""
-    if po or serial:
-        return RuleResult(
-            "identity_field_presence", "PO Number or Serial Number", po or serial, "PASS",
-            "At least one identity field present",
-        )
-    return RuleResult(
-        "identity_field_presence", "PO Number or Serial Number", None, "FAIL",
-        "Neither PO Number nor Serial Number found on COC",
-    )
-
-
 def check_quantity(expected_qty: float | None, actual_value: str | None) -> RuleResult:
-    """Requirement #6: verify COC quantity against PO/project quantity."""
+    """Verify COC quantity against BOM quantity."""
     actual_qty = parse_quantity(actual_value) if actual_value else None
 
     if actual_qty is None:
         return RuleResult("quantity", str(expected_qty) if expected_qty is not None else None, actual_value, "FAIL", "Quantity not found on COC")
     if expected_qty is None:
-        return RuleResult("quantity", None, str(actual_qty), "WARNING", "No BOM/PO quantity to validate against")
+        return RuleResult("quantity", None, str(actual_qty), "WARNING", "No BOM quantity to validate against")
     if actual_qty == expected_qty:
-        return RuleResult("quantity", str(expected_qty), str(actual_qty), "PASS", "Quantity matches BOM/PO")
+        return RuleResult("quantity", str(expected_qty), str(actual_qty), "PASS", "Quantity matches BOM")
     return RuleResult(
         "quantity", str(expected_qty), str(actual_qty), "FAIL",
         f"Quantity mismatch: expected {expected_qty}, found {actual_qty}",

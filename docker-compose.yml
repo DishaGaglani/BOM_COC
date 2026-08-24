@@ -1,38 +1,12 @@
 services:
-  postgres:
-    image: postgres:16
-    environment:
-      POSTGRES_USER: bomcoc
-      POSTGRES_PASSWORD: bomcoc
-      POSTGRES_DB: bomcoc
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-
-  ollama:
-    image: ollama/ollama:latest
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_models:/root/.ollama
-    # After first start, pull a model with:
-    #   docker exec -it <ollama_container> ollama pull llama3.1:8b
-
   backend:
     build: ./backend
     environment:
-      DATABASE_URL: postgresql+psycopg2://bomcoc:bomcoc@postgres:5432/bomcoc
-      OLLAMA_HOST: http://ollama:11434
-      OLLAMA_MODEL: llama3.1:8b
-      STORAGE_DIR: /app/storage
+      BOMCOC_STORAGE_DIR: /app/storage
     volumes:
       - ./backend:/app
     ports:
       - "8000:8000"
-    depends_on:
-      - postgres
-      - ollama
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   frontend:
@@ -48,6 +22,8 @@ services:
       - backend
 
 volumes:
-  pgdata:
-  ollama_models:
   frontend_node_modules:
+
+# Postgres and Ollama services were removed with the old backend during the
+# unstructured.io parsing rewrite. Re-add them once the parsed-output ->
+# Gemma pipeline and persistence layer are built.

@@ -1,4 +1,4 @@
-from app.normalization.synonyms import normalize_label
+from app.parameters.synonyms import normalize_label
 
 # When a table has more than one column that maps to the same canonical
 # field (e.g. a BOM with both an internal "L&T Cat No." and the
