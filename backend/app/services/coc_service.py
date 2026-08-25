@@ -21,7 +21,7 @@ def ingest_and_validate_coc(bom: BOM, document: ParsedDocument, source_pdf_path:
     fields = extract_coc(document)
     matched_item = match_bom_item(bom.items, fields)
 
-    results = run_validation(matched_item, fields)
+    results = run_validation(matched_item, fields, contract_date=bom.contract_date)
     if matched_item is None:
         # The field-by-field checks above already ran with "nothing to
         # validate against" for every BOM-sourced expected value — this

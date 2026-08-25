@@ -65,6 +65,23 @@ FIELD_SYNONYMS: dict[str, str] = {
     "date of issue": "coc_issue_date",
     "issued on": "coc_issue_date",
 
+    # BOM/project-level, not a per-item field — what a COC's issue date
+    # gets checked against (requirement #10). "PO date" is treated as a
+    # stand-in for the contract's effective date when no separate
+    # "Contract Date" is stated.
+    "contract date": "contract_date",
+    "contract effective date": "contract_date",
+    "effective date": "contract_date",
+    "po date": "contract_date",
+    "date of po": "contract_date",
+
+    # Whether a BOM line item is an imported part — gates whether import
+    # documents (requirement #7) are actually required for it, rather than
+    # always being expected.
+    "imported": "is_imported",
+    "import required": "is_imported",
+    "is imported": "is_imported",
+
     "description": "description",
     "item description": "description",
 }

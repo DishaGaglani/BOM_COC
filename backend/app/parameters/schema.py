@@ -24,6 +24,11 @@ CANONICAL_FIELDS = [
     "test_certificate",
     "import_documents",
     "authorization_letter",
+    # BOM/project-level context fields (not compliance-highlight fields
+    # themselves): contract_date gates the coc_issue_date check,
+    # is_imported gates whether import_documents is actually required.
+    "contract_date",
+    "is_imported",
 ]
 
 ExtractionMethod = Literal["table", "inline", "presence"]
@@ -72,6 +77,11 @@ class BOM(BaseModel):
     version: int
     status: BOMStatus
     items: list[BOMItem]
+    # The contract/effective date a COC's issue date gets checked against
+    # (requirement #10) — a BOM/project-level fact, not a per-item one.
+    # Either supplied explicitly on upload or extracted from the BOM
+    # document's own text; None if neither found it.
+    contract_date: str | None = None
 
 
 # --- COC: flat extracted fields + validation results against a matched BOM item ---

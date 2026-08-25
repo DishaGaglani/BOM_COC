@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 from rapidfuzz import fuzz
 
-from app.validation.normalize import normalize_identifier, parse_quantity
+from app.validation.normalize import normalize_identifier, parse_date, parse_quantity
 
 
 @dataclass
@@ -70,6 +70,56 @@ def check_presence(parameter: str, found_value: str | None) -> RuleResult:
     return RuleResult(
         parameter, "Present", None, "WARNING",
         f"{parameter.replace('_', ' ').title()} not mentioned anywhere in the document text — manual review required",
+    )
+
+
+def check_date_not_before(parameter: str, expected: str | None, actual: str | None) -> RuleResult:
+    """COC issue date vs. the BOM's contract/effective date (requirement
+    #10): a certificate can't attest compliance before the contract that
+    ordered the goods existed, so the COC's issue date must be on or after
+    it."""
+    if not actual:
+        return RuleResult(parameter, expected, actual, "WARNING", f"{parameter.replace('_', ' ').title()} not found on COC")
+    if not expected:
+        return RuleResult(parameter, expected, actual, "WARNING", "No BOM contract/effective date to validate against")
+
+    actual_date = parse_date(actual)
+    expected_date = parse_date(expected)
+    if actual_date is None or expected_date is None:
+        return RuleResult(parameter, expected, actual, "WARNING", "Could not parse date(s) for comparison — manual review required")
+
+    if actual_date >= expected_date:
+        return RuleResult(
+            parameter, expected, actual, "PASS",
+            f"COC issued {actual_date.isoformat()}, on/after contract date {expected_date.isoformat()}",
+        )
+    return RuleResult(
+        parameter, expected, actual, "FAIL",
+        f"COC issued {actual_date.isoformat()}, before contract/effective date {expected_date.isoformat()}",
+    )
+
+
+def check_conditional_presence(parameter: str, is_required: bool | None, found_value: str | None) -> RuleResult:
+    """Like check_presence, but for requirements that only apply
+    conditionally (requirement #7: import documents are only required 'if
+    item is imported'). `is_required` comes from a BOM column (e.g.
+    'Imported: Yes/No') via normalize.parse_bool_flag — None means the BOM
+    didn't say either way, not that the answer is 'no'."""
+    if is_required is False:
+        return RuleResult(parameter, None, found_value, "PASS", "Not applicable — item is not marked as imported on the BOM")
+
+    if found_value:
+        return RuleResult(parameter, "Present", found_value, "PASS", f"'{found_value}' found on document")
+
+    if is_required is True:
+        return RuleResult(
+            parameter, "Present", None, "FAIL",
+            f"{parameter.replace('_', ' ').title()} required — item is marked as imported on the BOM, but none were found on the COC",
+        )
+
+    return RuleResult(
+        parameter, "Present", None, "WARNING",
+        f"{parameter.replace('_', ' ').title()} not mentioned, and import status isn't specified on the BOM — manual review required",
     )
 
 

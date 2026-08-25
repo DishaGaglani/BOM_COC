@@ -105,13 +105,21 @@ def api_list_boms() -> list[BOM]:
 
 
 @app.post("/api/boms", response_model=BOM)
-async def api_upload_bom(project_id: str = Form(...), file: UploadFile = File(...), strategy: str | None = None) -> BOM:
+async def api_upload_bom(
+    project_id: str = Form(...),
+    file: UploadFile = File(...),
+    contract_date: str | None = Form(None),
+    strategy: str | None = None,
+) -> BOM:
     document, _ = await _receive_and_parse(file, strategy)
     try:
-        bom = ingest_bom(project_id, document)
+        bom = ingest_bom(project_id, document, contract_date=contract_date)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    logger.info("Ingested BOM %s (project=%s, version=%d) -> %d items", bom.filename, project_id, bom.version, len(bom.items))
+    logger.info(
+        "Ingested BOM %s (project=%s, version=%d, contract_date=%s) -> %d items",
+        bom.filename, project_id, bom.version, bom.contract_date, len(bom.items),
+    )
     return bom
 
 

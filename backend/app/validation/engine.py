@@ -1,13 +1,18 @@
 from typing import TYPE_CHECKING
 
 from app.validation import rules
+from app.validation.normalize import parse_bool_flag
 
 if TYPE_CHECKING:
     from app.parameters.schema import BOMItem, ExtractedField
 
 FUZZY_TEXT_FIELDS = ["description"]
-EXACT_TEXT_FIELDS = ["manufacturer", "manufacturing_year", "warranty_expiry", "coc_issue_date"]
-PRESENCE_FIELDS = ["signature", "seal", "test_certificate", "import_documents", "authorization_letter"]
+EXACT_TEXT_FIELDS = ["manufacturer", "manufacturing_year", "warranty_expiry"]
+# coc_issue_date (checked against contract_date) and import_documents
+# (gated on is_imported) get dedicated handling below instead of the
+# generic exact-match/presence loops — see check_date_not_before and
+# check_conditional_presence.
+PRESENCE_FIELDS = ["signature", "seal", "test_certificate", "authorization_letter"]
 
 # Canonical field name -> BOMItem attribute, where they differ.
 _ATTR_ALIASES = {"po_numbers": "po_number"}
@@ -40,14 +45,22 @@ def _bom_expected(bom_item: "BOMItem | None", field_name: str) -> str | None:
     return bom_item.requirements.get(field_name)
 
 
-def run_validation(bom_item: "BOMItem | None", coc_fields: "list[ExtractedField]") -> list[dict]:
+def run_validation(
+    bom_item: "BOMItem | None",
+    coc_fields: "list[ExtractedField]",
+    contract_date: str | None = None,
+) -> list[dict]:
     """Validates the full canonical field set against the matched BOM line:
     identity-field presence, PO Number, Part ID, Model, Serial Number,
     Quantity, Description, Manufacturer, Manufacturing Year, Warranty
-    Expiry, COC Issue Date, plus presence checks for Signature, Seal, Test
-    Certificate, Import Documents, and Authorization Letter. Each result
+    Expiry, COC Issue Date (vs. the BOM's contract_date), plus presence
+    checks for Signature, Seal, Test Certificate, Import Documents (gated
+    on the BOM's is_imported), and Authorization Letter. Each result
     carries the source ExtractedField (when matched) so the caller can
     highlight it on the PDF.
+
+    `contract_date` is BOM/project-level (see parameters.schema.BOM), not
+    per-item, so it's passed separately rather than read off bom_item.
 
     Returns a list of dicts: {rule_result, source_field}.
     """
@@ -90,6 +103,23 @@ def run_validation(bom_item: "BOMItem | None", coc_fields: "list[ExtractedField]
     results.append({
         "rule_result": rules.check_quantity(_bom_expected_quantity(bom_item), qty_field.field_value if qty_field else None),
         "source_field": qty_field,
+    })
+
+    coc_date_field = _best_value(coc_fields, "coc_issue_date")
+    results.append({
+        "rule_result": rules.check_date_not_before(
+            "coc_issue_date", contract_date, coc_date_field.field_value if coc_date_field else None
+        ),
+        "source_field": coc_date_field,
+    })
+
+    import_docs_field = _best_value(coc_fields, "import_documents")
+    is_imported = parse_bool_flag(_bom_expected(bom_item, "is_imported"))
+    results.append({
+        "rule_result": rules.check_conditional_presence(
+            "import_documents", is_imported, import_docs_field.field_value if import_docs_field else None
+        ),
+        "source_field": import_docs_field,
     })
 
     for field_name in FUZZY_TEXT_FIELDS:
