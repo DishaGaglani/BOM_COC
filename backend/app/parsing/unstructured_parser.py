@@ -120,6 +120,7 @@ def parse_document(
         page_number = metadata.get("page_number")
         html = metadata.get("text_as_html")
         bbox = _extract_bbox(metadata)
+        confidence = metadata.get("detection_class_prob")
 
         parsed_elements.append(
             ParsedElement(
@@ -129,6 +130,7 @@ def parse_document(
                 html=html,
                 page_number=page_number,
                 bbox=bbox,
+                confidence=confidence,
                 metadata={
                     k: v
                     for k, v in metadata.items()
@@ -148,6 +150,7 @@ def parse_document(
                     html=html,
                     text=el_dict.get("text", ""),
                     bbox=bbox,
+                    confidence=confidence,
                 )
             )
 

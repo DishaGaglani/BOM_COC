@@ -25,6 +25,12 @@ class ParsedElement(BaseModel):
     html: str | None = None
     page_number: int | None = None
     bbox: BBox | None = None
+    # The hi_res layout model's confidence that this region really is what
+    # it was classified as (e.g. a Table vs. stray text). Only present for
+    # hi_res-derived PDF/image elements — None for fast/ocr_only text and
+    # for native formats (xlsx/docx/csv) that never went through a layout
+    # model in the first place.
+    confidence: float | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -34,6 +40,7 @@ class ParsedTable(BaseModel):
     html: str | None = None
     text: str
     bbox: BBox | None = None
+    confidence: float | None = None
 
 
 class ParsedDocument(BaseModel):

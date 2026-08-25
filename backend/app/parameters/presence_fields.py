@@ -1,5 +1,6 @@
 import re
 
+from app.parameters.confidence import PRESENCE_CONFIDENCE
 from app.parameters.schema import ExtractedField
 from app.parsing.schema import ParsedElement
 
@@ -38,6 +39,7 @@ def extract_presence_fields(elements: list[ParsedElement]) -> list[ExtractedFiel
                     page_number=el.page_number,
                     bbox=el.bbox,
                     extraction_method="presence",
+                    confidence=PRESENCE_CONFIDENCE,
                 )
             )
 

@@ -1,10 +1,19 @@
 import uuid
 
+from app.parameters.confidence import HI_RES_TABLE_DEFAULT_CONFIDENCE, NATIVE_TABLE_CONFIDENCE
 from app.parameters.html_table import parse_html_table
 from app.parameters.schema import BOMItem, ExtractedField
 from app.parameters.table_headers import map_table_headers
-from app.parsing.schema import ParsedDocument
+from app.parsing.schema import ParsedDocument, ParsedTable
 from app.validation.normalize import parse_quantity
+
+
+def _table_confidence(document: ParsedDocument, table: ParsedTable) -> float:
+    if table.confidence is not None:
+        return table.confidence  # real detection_class_prob from the hi_res layout model
+    if document.strategy_used in ("hi_res", "ocr_only"):
+        return HI_RES_TABLE_DEFAULT_CONFIDENCE
+    return NATIVE_TABLE_CONFIDENCE  # native xlsx/docx/csv — no layout model involved
 
 # BOMItem's dedicated columns; anything else a table column mapped to lands
 # in BOMItem.requirements instead.
@@ -74,6 +83,7 @@ def extract_coc_table_fields(document: ParsedDocument) -> list[ExtractedField]:
         if not col_map:
             continue
 
+        confidence = _table_confidence(document, table)
         header_row = rows[0]
         for raw_row in rows[1:]:
             for idx, field in col_map.items():
@@ -91,6 +101,7 @@ def extract_coc_table_fields(document: ParsedDocument) -> list[ExtractedField]:
                         bbox=table.bbox,
                         extraction_method="table",
                         raw_label=header_row[idx].strip() if idx < len(header_row) and header_row[idx] else None,
+                        confidence=confidence,
                     )
                 )
 

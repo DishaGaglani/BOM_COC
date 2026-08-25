@@ -13,9 +13,14 @@ PRESENCE_FIELDS = ["signature", "seal", "test_certificate", "import_documents", 
 _ATTR_ALIASES = {"po_numbers": "po_number"}
 
 
-def _first_value(fields: "list[ExtractedField]", field_name: str) -> "ExtractedField | None":
+def _best_value(fields: "list[ExtractedField]", field_name: str) -> "ExtractedField | None":
+    """When multiple extractions disagree on the same canonical field (e.g.
+    a PO number found both in a table cell and in letterhead prose), the
+    higher-confidence one wins — see parameters/confidence.py."""
     matches = [f for f in fields if f.field_name == field_name]
-    return matches[0] if matches else None
+    if not matches:
+        return None
+    return max(matches, key=lambda f: f.confidence)
 
 
 def _bom_expected(bom_item: "BOMItem | None", field_name: str) -> str | None:
@@ -48,11 +53,11 @@ def run_validation(bom_item: "BOMItem | None", coc_fields: "list[ExtractedField]
     """
     results: list[dict] = []
 
-    po_field = _first_value(coc_fields, "po_numbers")
-    part_id_field = _first_value(coc_fields, "part_id")
-    model_field = _first_value(coc_fields, "model")
-    serial_field = _first_value(coc_fields, "serial_numbers")
-    qty_field = _first_value(coc_fields, "quantity")
+    po_field = _best_value(coc_fields, "po_numbers")
+    part_id_field = _best_value(coc_fields, "part_id")
+    model_field = _best_value(coc_fields, "model")
+    serial_field = _best_value(coc_fields, "serial_numbers")
+    qty_field = _best_value(coc_fields, "quantity")
 
     results.append({
         "rule_result": rules.check_identity_field_presence(
@@ -88,21 +93,21 @@ def run_validation(bom_item: "BOMItem | None", coc_fields: "list[ExtractedField]
     })
 
     for field_name in FUZZY_TEXT_FIELDS:
-        field = _first_value(coc_fields, field_name)
+        field = _best_value(coc_fields, field_name)
         results.append({
             "rule_result": rules.check_fuzzy_match(field_name, _bom_expected(bom_item, field_name), field.field_value if field else None),
             "source_field": field,
         })
 
     for field_name in EXACT_TEXT_FIELDS:
-        field = _first_value(coc_fields, field_name)
+        field = _best_value(coc_fields, field_name)
         results.append({
             "rule_result": rules.check_exact_match(field_name, _bom_expected(bom_item, field_name), field.field_value if field else None, required=False),
             "source_field": field,
         })
 
     for field_name in PRESENCE_FIELDS:
-        field = _first_value(coc_fields, field_name)
+        field = _best_value(coc_fields, field_name)
         results.append({
             "rule_result": rules.check_presence(field_name, field.field_value if field else None),
             "source_field": field,

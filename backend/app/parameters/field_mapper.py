@@ -1,5 +1,6 @@
 import re
 
+from app.parameters.confidence import INLINE_LABEL_VALUE_CONFIDENCE, PO_FALLBACK_CONFIDENCE
 from app.parameters.schema import ExtractedField
 from app.parameters.synonyms import normalize_label
 from app.parsing.schema import ParsedElement
@@ -45,6 +46,7 @@ def extract_inline_fields(elements: list[ParsedElement]) -> list[ExtractedField]
                     bbox=el.bbox,
                     extraction_method="inline",
                     raw_label=m.group("label").strip(),
+                    confidence=INLINE_LABEL_VALUE_CONFIDENCE,
                 )
             )
 
@@ -70,6 +72,7 @@ def extract_po_fallback(elements: list[ParsedElement]) -> list[ExtractedField]:
                 bbox=el.bbox,
                 extraction_method="inline",
                 raw_label="PO No.",
+                confidence=PO_FALLBACK_CONFIDENCE,
             )
         )
 
