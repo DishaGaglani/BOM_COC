@@ -8,7 +8,8 @@ and the requirements in the L&T requirements email.
 
 ## Stack
 
-- Backend: FastAPI, file-based JSON storage (`backend/storage/` — no database yet)
+- Backend: FastAPI, SQLite (`backend/storage/bomcoc.db`, via the stdlib `sqlite3` — no
+  extra dependency)
 - Document parsing: [unstructured](https://unstructured.io) (local, open-source library —
   no documents leave the machine), covering scanned/native PDFs, images, Word, Excel,
   CSV/TSV, plain text, HTML, and email formats.
@@ -28,7 +29,8 @@ HTML. Strategy defaults to `auto`, with a fallback chain (`hi_res` → `ocr_only
 `fast`) if a strategy fails — e.g. if the hi-res layout model can't be downloaded on an
 offline VM.
 - `POST /documents/parse` — parse any supported file (PDF, scanned PDF, image, DOCX,
-  XLSX/XLS, CSV/TSV, TXT, HTML, EML/MSG); saves the upload and the parsed JSON.
+  XLSX/XLS, CSV/TSV, TXT, HTML, EML/MSG); saves the raw upload to disk and the parsed
+  output as a row in SQLite.
 - `GET /documents`, `GET /documents/{document_id}` — list / fetch parsed output.
 
 **Parameter extraction** (`app/parameters/`) — rule-based only: table header → canonical
@@ -85,14 +87,29 @@ human-readable reason.
 against a selected BOM, and view PASS/FAIL/WARNING results per certificate
 (`BomLibrary`, `BomUpload`, `CocUpload`, `ValidationReport`, `StatusBadge`).
 
+**Storage** (`app/db.py`, `app/storage.py`, `app/parameters/storage.py`) — structured
+records (parsed-document metadata, BOMs, COCs) live in SQLite, one JSON blob per row
+plus a few indexed columns for the query patterns each caller actually needs (list by
+project, filter COCs by `bom_id`, order by upload time) — not a normalized relational
+redesign, just the same JSON documents behind SQLite instead of loose files, so writes
+are atomic and a `UNIQUE (project_id, version)` constraint on `boms` makes a version
+collision from two concurrent BOM uploads for the same project a loud, retryable
+`ValueError` instead of one silently overwriting the other. Raw binary files (the
+original upload, the highlighted PDF) stay on disk under `backend/storage/` — the
+parsing/annotation libraries need a real file path, not a blob — everything else is in
+`backend/storage/bomcoc.db`.
+
 ### Known gaps
 
 - No LLM/semantic comparison stage (per the architecture doc) — everything today is
   deterministic rules + confidence heuristics, no arbitration beyond "highest confidence
   wins" on conflicting extractions.
-- No database — BOMs/COCs/parsed docs are flat JSON files under `backend/storage/`, fine
-  at current volume but unindexed, not concurrency-safe (no locking around version
-  assignment), and writes aren't atomic.
+- The BOM version-assignment race isn't fully closed, only made safe: `get_next_bom_version`
+  and the eventual `save_bom` are still two separate calls (`bom_service.ingest_bom`), so
+  two concurrent uploads for the same project can still both read the same "next version"
+  before either writes — the loser now gets a clear, retryable error instead of silently
+  overwriting the winner, but closing the race itself would mean collapsing that two-call
+  pattern into one storage-layer transaction.
 - The frontend header text ("Runs on this machine — Postgres + local Ollama") predates
   the rewrite and doesn't reflect the current stack — cosmetic cleanup pending.
 - Golden-file tests against the real samples in `review/` (through the actual
@@ -142,5 +159,7 @@ docker compose up --build
 ```
 
 The `postgres` and `ollama` services from the previous architecture were removed along
-with the old backend; re-add persistence and the Gemma-serving service once the
-parsed-output → LLM pipeline is built.
+with the old backend. Persistence is now SQLite (a file under the `backend` bind mount,
+so it survives container restarts same as before) — no separate DB service needed; only
+the Gemma-serving service remains to be re-added, once the parsed-output → LLM pipeline
+is built.

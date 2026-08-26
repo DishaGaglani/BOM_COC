@@ -25,5 +25,6 @@ volumes:
   frontend_node_modules:
 
 # Postgres and Ollama services were removed with the old backend during the
-# unstructured.io parsing rewrite. Re-add them once the parsed-output ->
-# Gemma pipeline and persistence layer are built.
+# unstructured.io parsing rewrite. Persistence is SQLite now (backend/storage/
+# bomcoc.db, inside the ./backend bind mount above — no separate service
+# needed). Re-add Ollama once the parsed-output -> Gemma pipeline is built.
