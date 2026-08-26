@@ -1,22 +1,26 @@
 # COC Review Tool — BOM/COC Semantic Validation
 
-Rebuilding on the architecture in `AI_BOM_COC_Semantic_Validation_Architecture.docx`,
-built against the requirements in the L&T requirements email.
+Checks a Certificate of Conformance (COC) against a project's Bill of Materials (BOM):
+extracts structured fields from both, matches each COC to a BOM line item, runs
+pass/fail/warning checks field-by-field, and produces a highlighted PDF + report.
+Built against the architecture in `AI_BOM_COC_Semantic_Validation_Architecture.docx`
+and the requirements in the L&T requirements email.
 
 ## Stack
 
-- Backend: FastAPI
+- Backend: FastAPI, file-based JSON storage (`backend/storage/` — no database yet)
 - Document parsing: [unstructured](https://unstructured.io) (local, open-source library —
   no documents leave the machine), covering scanned/native PDFs, images, Word, Excel,
   CSV/TSV, plain text, HTML, and email formats.
 - Frontend: React + TypeScript + Vite
 
-## Current state (rewrite in progress)
+## Current state
 
-The previous backend (pdfplumber/Tesseract extraction, rule-based + Ollama field
-extraction, validation engine, Postgres persistence) has been removed and is being
-rebuilt from scratch: parsing first, then rule-based parameter extraction, matching
-the two boxes before the LLM comparison stage in the architecture diagram.
+Extraction and validation are entirely **rule-based** — there is no LLM in the loop yet.
+The architecture doc calls for a local Gemma model (served via Ollama) to arbitrate
+ambiguous/conflicting extractions; that stage, and the Postgres persistence layer it
+implies, haven't been built. Both were removed from `docker-compose.yml` during the
+unstructured.io rewrite and are re-added once that pipeline exists.
 
 **Parsing** (`app/parsing/`) — upload → `unstructured`'s `partition()` dispatcher →
 typed elements (Title, NarrativeText, Table, etc.), tables kept as both plain text and
@@ -27,25 +31,73 @@ offline VM.
   XLSX/XLS, CSV/TSV, TXT, HTML, EML/MSG); saves the upload and the parsed JSON.
 - `GET /documents`, `GET /documents/{document_id}` — list / fetch parsed output.
 
-**Parameter extraction** (`app/parameters/`) — rule-based only (no LLM yet): table
-header → canonical field mapping (`synonyms.py`, `table_headers.py` — carried over from
-the original build, already validated against real L&T BOM/COC samples), inline
-label:value text, a PO-number prose fallback, and presence-only compliance markers
-(signature/seal/test certificate mentions).
-- `POST /bom/upload` — parses a BOM and extracts line items (one dict of canonical
-  fields per table row: `part_id`, `description`, `manufacturer`, `quantity`, ...).
-  Requires a detected table; raises if none is found; no "ground truth"/versioning
-  semantics yet — that's a later, comparison-stage concern.
-  `GET /bom`, `GET /bom/{document_id}`.
-- `POST /coc/upload` — accepts one or more files (`files=@a.pdf -F files=@b.pdf`),
-  extracts a flat field list per COC (table + inline + presence, all kept — nothing
-  arbitrates conflicting values yet since there's no LLM in the loop).
-  `GET /coc`, `GET /coc/{document_id}`.
+**Parameter extraction** (`app/parameters/`) — rule-based only: table header → canonical
+field mapping (`synonyms.py`, `table_headers.py` — validated against real L&T BOM/COC
+samples), inline label:value text, a PO-number prose fallback, and presence-only
+compliance markers (signature/seal/test certificate mentions). Each extraction carries a
+confidence score (`confidence.py`) reflecting how much that extraction method should be
+trusted — used to pick a winner when the same canonical field is extracted more than
+once with conflicting values.
+- `POST /api/boms` — parses a BOM and extracts line items (one dict of canonical fields
+  per table row: `part_id`, `description`, `manufacturer`, `quantity`, `po_number`, ...).
+  Requires a detected table; raises if none is found. Superseds any prior active BOM for
+  the same `project_id`, so the newest BOM becomes the reference ("BOM stays in scope
+  until the next BOM"). `contract_date` (used to validate COC issue dates) is taken from
+  an explicit form field, else inline letterhead text, else a "PO Date" table column.
+  `GET /api/boms`, `GET /api/boms/{bom_id}`, `GET /api/boms/by-project/{project_id}/active`.
+- `POST /api/boms/{bom_id}/cocs` — accepts one or more COC files (batch upload),
+  extracts a flat field list per COC (table + inline + presence, all kept), matches it to
+  a BOM line item, and runs full validation against it.
+  `GET /api/boms/{bom_id}/cocs`, `GET /api/cocs/{coc_id}`.
 
-Not yet implemented: passing BOM/COC parameters to the local Gemma model on the VM for
-comparison, PDF highlighting, validation PASS/FAIL/WARNING results, and the frontend
-integration (the old BOM/COC upload UI in `frontend/` still points at the removed
-endpoints and needs to be rewired once the pipeline's shape settles further).
+**Matching** (`app/validation/matching.py`) — a COC is matched against BOM lines in tiers,
+most specific first: Part ID + PO Number together, then Part ID alone, then PO Number
+alone. Each tier compares alphanumeric-only (formatting noise like `PO-45892` vs
+`PO45892` vs `PO 45892` doesn't stop a match). Real BOMs often carry more than one line
+for the same part (separate lots/deliveries), so a tier matching more than one line falls
+back to quantity as a tiebreaker before giving up. If a tier still can't be narrowed to
+one line, the match is reported `ambiguous` (distinct from `unmatched` — no BOM line
+looks like this COC at all) rather than silently validating against an arbitrarily-picked
+line. A logical BOM/COC table that `unstructured` splits across a page break into
+separate table elements is reassembled — a header-less fragment whose row width fits the
+immediately preceding table's columns is treated as that table's continuation, one page
+ahead only.
+
+**Validation** (`app/validation/`) — per matched BOM line: identity-field presence (PO or
+Serial Number required), match (PO Number, Part ID, Model, Serial Number — exact first,
+falling back to a formatting-only difference, then to a close-but-not-identical WARNING
+for likely typos), quantity match (a single COC no longer has to equal the BOM line's
+full quantity — partial shipments across multiple COCs are tracked cumulatively against
+the BOM's total, only failing once the running total is exceeded), fuzzy token-set match
+for free-text description, exact match for manufacturer/manufacturing year/warranty
+expiry, COC issue date on/after the BOM's contract date, presence checks (signature,
+seal, test certificate, authorization letter), and import documents required only when
+the BOM marks that item as imported. Every result is PASS / FAIL / WARNING with a
+human-readable reason.
+- `GET /api/cocs/{coc_id}/report` — parameter-by-parameter validation report.
+- `GET /api/cocs/{coc_id}/highlighted-pdf` — the COC with each validated field
+  highlighted on the page (via `app/annotation/pdf_annotator.py`), tagged by status. Built
+  best-effort: a failure here (malformed bbox, corrupt/encrypted source PDF) is logged and
+  degrades to a 404 on this endpoint rather than losing the COC's validation result, which
+  is already saved by this point.
+
+**Frontend** (`frontend/`) — wired to the current API: upload/list BOMs, upload COCs
+against a selected BOM, and view PASS/FAIL/WARNING results per certificate
+(`BomLibrary`, `BomUpload`, `CocUpload`, `ValidationReport`, `StatusBadge`).
+
+### Known gaps
+
+- No LLM/semantic comparison stage (per the architecture doc) — everything today is
+  deterministic rules + confidence heuristics, no arbitration beyond "highest confidence
+  wins" on conflicting extractions.
+- No database — BOMs/COCs/parsed docs are flat JSON files under `backend/storage/`, fine
+  at current volume but unindexed, not concurrency-safe (no locking around version
+  assignment), and writes aren't atomic.
+- The frontend header text ("Runs on this machine — Postgres + local Ollama") predates
+  the rewrite and doesn't reflect the current stack — cosmetic cleanup pending.
+- Golden-file tests against the real samples in `review/` (through the actual
+  `unstructured` pipeline, not just fixtures) aren't built yet — see
+  `backend/tests/golden/README.md`.
 
 ## Running locally (dev machine, without Docker)
 
@@ -69,6 +121,19 @@ cd frontend
 npm install
 npm run dev
 ```
+
+## Running tests
+
+The unit/component suite (`backend/tests/`) covers extraction, matching, and validation
+logic directly — no `unstructured`/torch install needed:
+```
+cd backend
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt
+pytest
+```
+See `backend/tests/golden/README.md` for the (not yet built) real-document suite that
+exercises the actual parsing pipeline against the samples in `review/`.
 
 ## Running on the target VM (Docker)
 

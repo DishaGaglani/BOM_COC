@@ -1,0 +1,17 @@
+# Deps for the unit/component suite under tests/ — deliberately independent
+# of requirements.txt. That suite exercises extraction, matching, and
+# validation logic directly (constructing ParsedDocument/BOMItem/
+# ExtractedField fixtures rather than running unstructured.partition()), so
+# it never imports `unstructured`/torch/transformers/fastapi at all.
+# `pip install -r requirements-dev.txt` alone is enough to run `pytest` —
+# no need to also install requirements.txt.
+pytest==8.3.3
+pydantic==2.9.2
+pydantic-settings==2.5.2
+rapidfuzz==3.9.7
+python-dateutil==2.9.0.post0
+PyMuPDF==1.24.10
+
+# Golden tests that parse the real files under review/ through the actual
+# unstructured pipeline (see tests/golden/README.md) will need the full
+# requirements.txt stack too, once built.

@@ -49,6 +49,7 @@ def run_validation(
     bom_item: "BOMItem | None",
     coc_fields: "list[ExtractedField]",
     contract_date: str | None = None,
+    previously_delivered_quantity: float = 0.0,
 ) -> list[dict]:
     """Validates the full canonical field set against the matched BOM line:
     identity-field presence, PO Number, Part ID, Model, Serial Number,
@@ -61,6 +62,9 @@ def run_validation(
 
     `contract_date` is BOM/project-level (see parameters.schema.BOM), not
     per-item, so it's passed separately rather than read off bom_item.
+    `previously_delivered_quantity` is the sum already validated on other
+    COCs matched to the same BOM line, for partial-shipment quantity checks
+    (see rules.check_quantity).
 
     Returns a list of dicts: {rule_result, source_field}.
     """
@@ -101,7 +105,9 @@ def run_validation(
     })
 
     results.append({
-        "rule_result": rules.check_quantity(_bom_expected_quantity(bom_item), qty_field.field_value if qty_field else None),
+        "rule_result": rules.check_quantity(
+            _bom_expected_quantity(bom_item), qty_field.field_value if qty_field else None, previously_delivered_quantity
+        ),
         "source_field": qty_field,
     })
 

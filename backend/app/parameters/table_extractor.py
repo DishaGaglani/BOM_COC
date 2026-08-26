@@ -1,4 +1,5 @@
 import uuid
+from typing import Iterator
 
 from app.parameters.confidence import HI_RES_TABLE_DEFAULT_CONFIDENCE, NATIVE_TABLE_CONFIDENCE
 from app.parameters.html_table import parse_html_table
@@ -20,6 +21,55 @@ def _table_confidence(document: ParsedDocument, table: ParsedTable) -> float:
 _DEDICATED_BOM_FIELDS = {"part_id", "description", "manufacturer", "model", "quantity", "po_numbers"}
 
 
+def _fits_column_map(row: list[str], col_map: dict[int, str]) -> bool:
+    return len(row) > max(col_map)
+
+
+def _iter_data_rows(
+    document: ParsedDocument,
+) -> "Iterator[tuple[ParsedTable, list[list[str]], list[str], dict[int, str]]]":
+    """Yields (table, data_rows, header_row, col_map) for every table
+    element that has — or inherits — a recognizable header row.
+
+    `unstructured` sometimes splits one logical table across a page break
+    into separate table elements; a continuation fragment has no header row
+    of its own (its first row is already data), so map_table_headers()
+    would normally find nothing and the whole fragment gets silently
+    dropped. Here, a header-less fragment whose row width still fits the
+    immediately preceding table's column map is treated as a continuation
+    of it — every one of its rows counts as data, including row 0.
+
+    Carry-forward only reaches one table ahead, not indefinitely: it's
+    consumed as soon as it's used, so an unrelated small header-less table
+    later in the document (e.g. a signature block laid out as a table)
+    doesn't also get misread as more BOM/COC rows.
+    """
+    carried: tuple[list[str], dict[int, str]] | None = None
+
+    for table in document.tables:
+        if not table.html:
+            carried = None
+            continue
+        rows = parse_html_table(table.html)
+        if not rows:
+            carried = None
+            continue
+
+        header_col_map = map_table_headers(rows[0])
+        if header_col_map:
+            if len(rows) >= 2:
+                yield table, rows[1:], rows[0], header_col_map
+            carried = (rows[0], header_col_map)
+            continue
+
+        if carried is not None and _fits_column_map(rows[0], carried[1]):
+            yield table, rows, carried[0], carried[1]
+            carried = None
+            continue
+
+        carried = None
+
+
 def extract_bom_line_items(document: ParsedDocument) -> list[BOMItem]:
     """One BOMItem per BOM table row. Real BOM line items live in genuine
     tables — a header row naming the column, and a separate data row per
@@ -27,18 +77,8 @@ def extract_bom_line_items(document: ParsedDocument) -> list[BOMItem]:
     are consulted here."""
     items: list[BOMItem] = []
 
-    for table in document.tables:
-        if not table.html:
-            continue
-        rows = parse_html_table(table.html)
-        if len(rows) < 2:
-            continue
-
-        col_map = map_table_headers(rows[0])
-        if not col_map:
-            continue  # not a BOM-shaped table (e.g. a formatting/layout table)
-
-        for raw_row in rows[1:]:
+    for table, data_rows, _header_row, col_map in _iter_data_rows(document):
+        for raw_row in data_rows:
             row: dict[str, str] = {}
             for idx, field in col_map.items():
                 if idx < len(raw_row) and raw_row[idx]:
@@ -72,20 +112,9 @@ def extract_coc_table_fields(document: ParsedDocument) -> list[ExtractedField]:
     table-sourced field highlights the table region it came from."""
     fields: list[ExtractedField] = []
 
-    for table in document.tables:
-        if not table.html:
-            continue
-        rows = parse_html_table(table.html)
-        if len(rows) < 2:
-            continue
-
-        col_map = map_table_headers(rows[0])
-        if not col_map:
-            continue
-
+    for table, data_rows, header_row, col_map in _iter_data_rows(document):
         confidence = _table_confidence(document, table)
-        header_row = rows[0]
-        for raw_row in rows[1:]:
+        for raw_row in data_rows:
             for idx, field in col_map.items():
                 if idx >= len(raw_row) or not raw_row[idx]:
                     continue
