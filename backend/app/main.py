@@ -186,7 +186,7 @@ async def api_upload_cocs(
     records: list[COC] = []
     for file in files:
         document, stored_path = await _receive_and_parse(file, strategy)
-        coc = ingest_and_validate_coc(bom, document, stored_path)
+        coc = await ingest_and_validate_coc(bom, document, stored_path)
         logger.info("Validated COC %s -> %d fields, %d validations", coc.filename, len(coc.fields), len(coc.validations))
         records.append(coc)
 

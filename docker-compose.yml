@@ -1,4 +1,25 @@
 services:
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    environment:
+      # CPU-only Ollama (no GPU). Pre-pull the gemma model at startup via the
+      # entrypoint script (see below).
+      OLLAMA_NUM_GPU: 0
+    volumes:
+      - ollama_models:/root/.ollama/models
+    command: >
+      sh -c "ollama pull gemma:7b && ollama serve"
+    # Timeout startup to 5m in case the model pull stalls (unreliable network
+    # on the target VM). If Ollama fails to start, the backend will gracefully
+    # skip semantic validation (no endpoint configured).
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+
   backend:
     build: ./backend
     environment:
@@ -9,10 +30,18 @@ services:
       # Origins allowed by CORS, as a JSON array; defaults to
       # ["http://localhost:5173"] if unset.
       # BOMCOC_ALLOWED_ORIGINS: '["http://localhost:5173"]'
+      # Gemma-via-Ollama for semantic COC-vs-BOM validation.
+      # Point to the ollama service (defined above); unset to disable semantic validation.
+      BOMCOC_OLLAMA_BASE_URL: http://ollama:11434
+      BOMCOC_OLLAMA_MODEL: gemma:7b
+      BOMCOC_OLLAMA_TIMEOUT_SECONDS: 60
     volumes:
       - ./backend:/app
     ports:
       - "8000:8000"
+    depends_on:
+      ollama:
+        condition: service_healthy
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   frontend:
@@ -31,8 +60,9 @@ services:
 
 volumes:
   frontend_node_modules:
+  ollama_models:
 
-# Postgres and Ollama services were removed with the old backend during the
-# unstructured.io parsing rewrite. Persistence is SQLite now (backend/storage/
-# bomcoc.db, inside the ./backend bind mount above — no separate service
-# needed). Re-add Ollama once the parsed-output -> Gemma pipeline is built.
+# The Ollama service (re-added) pre-pulls the Gemma 7B model on startup so it
+# is ready for semantic COC-vs-BOM validation (once app/services/gemma_validator.py
+# is fully wired). Persistence is SQLite for BOMs/COCs (backend/storage/bomcoc.db),
+# and persistent volume storage for the Gemma model (not re-downloaded on restart).

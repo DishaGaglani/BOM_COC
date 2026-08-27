@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     api_key: str | None = None
     allowed_origins: list[str] = ["http://localhost:5173"]
     parse_timeout_seconds: int = 120
+    # Gemma-via-Ollama endpoint for semantic COC-vs-BOM validation.
+    # If unset, semantic validation is skipped (only fast rule-based checks run).
+    ollama_base_url: str | None = None
+    ollama_model: str = "gemma:7b"
+    ollama_timeout_seconds: int = 60
 
     @property
     def upload_dir(self) -> Path:

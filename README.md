@@ -17,11 +17,20 @@ and the requirements in the L&T requirements email.
 
 ## Current state
 
-Extraction and validation are entirely **rule-based** — there is no LLM in the loop yet.
-The architecture doc calls for a local Gemma model (served via Ollama) to arbitrate
-ambiguous/conflicting extractions; that stage, and the Postgres persistence layer it
-implies, haven't been built. Both were removed from `docker-compose.yml` during the
-unstructured.io rewrite and are re-added once that pipeline exists.
+**Parsing & extraction** (`unstructured.io`) are deterministic and local — no LLM in that loop.
+
+**Validation** is two-tier: **Tier 1 (rule-based)** always runs, checking format, presence,
+dates, and exact/fuzzy matches against the BOM. **Tier 2 (Gemma via Ollama)** is optional —
+if `BOMCOC_OLLAMA_BASE_URL` is set on the VM, a local Gemma 7B model is pulled and used for
+holistic semantic validation after a successful BOM match. If Gemma is unavailable or
+disabled, Tier 1 checks alone are sufficient for compliance review — Gemma is an enhancement,
+not a requirement.
+
+The Ollama service (previously removed during the unstructured rewrite) has been re-added to
+`docker-compose.yml` — it pre-pulls the Gemma model on startup. The integration with the
+backend (`app/services/gemma_validator.py`) is scaffolded but not yet fully implemented — see
+the TODO comments there for what remains: prompt construction, the actual Ollama HTTP call,
+and parsing Gemma's response.
 
 **Parsing** (`app/parsing/`) — upload → `unstructured`'s `partition()` dispatcher →
 typed elements (Title, NarrativeText, Table, etc.), tables kept as both plain text and
@@ -72,17 +81,28 @@ separate table elements is reassembled — a header-less fragment whose row widt
 immediately preceding table's columns is treated as that table's continuation, one page
 ahead only.
 
-**Validation** (`app/validation/`) — per matched BOM line: identity-field presence (PO or
-Serial Number required), match (PO Number, Part ID, Model, Serial Number — exact first,
-falling back to a formatting-only difference, then to a close-but-not-identical WARNING
-for likely typos), quantity match (a single COC no longer has to equal the BOM line's
-full quantity — partial shipments across multiple COCs are tracked cumulatively against
-the BOM's total, only failing once the running total is exceeded), fuzzy token-set match
-for free-text description, exact match for manufacturer/manufacturing year/warranty
-expiry, COC issue date on/after the BOM's contract date, presence checks (signature,
-seal, test certificate, authorization letter), and import documents required only when
-the BOM marks that item as imported. Every result is PASS / FAIL / WARNING with a
-human-readable reason.
+**Validation** (`app/validation/` + `app/services/gemma_validator.py`) — two-tier validation
+per matched BOM line, run in sequence:
+1. **Tier 1: Fast rule-based checks** — identity-field presence (PO or Serial Number required),
+   match (PO Number, Part ID, Model, Serial Number — exact first, falling back to a
+   formatting-only difference, then to a close-but-not-identical WARNING for likely typos),
+   quantity match (a single COC no longer has to equal the BOM line's full quantity —
+   partial shipments across multiple COCs are tracked cumulatively against the BOM's total,
+   only failing once the running total is exceeded), fuzzy token-set match for free-text
+   description, exact match for manufacturer/manufacturing year/warranty expiry, COC issue
+   date on/after the BOM's contract date, presence checks (signature, seal, test certificate,
+   authorization letter), and import documents required only when the BOM marks that item as
+   imported.
+2. **Tier 2: Semantic validation via Gemma** (optional, requires `BOMCOC_OLLAMA_BASE_URL` set) —
+   after a successful match, Gemma (running locally via Ollama on the VM) takes the extracted
+   facts and validates them holistically: "does this COC actually demonstrate compliance with
+   this BOM's requirements?" Gemma can catch nuance that rigid rules miss (e.g. a typo in part
+   number that's still obviously the same component in context, or a qualification that's valid
+   but in a non-standard format). If semantic validation is disabled or unavailable, only Tier 1
+   checks run — the tool remains fully functional for compliance review, just with less semantic
+   sophistication.
+
+   Every result is PASS / FAIL / WARNING with a human-readable reason.
 - `GET /api/cocs/{coc_id}/report` — parameter-by-parameter validation report.
 - `GET /api/cocs/{coc_id}/highlighted-pdf` — the COC with each validated field
   highlighted on the page (via `app/annotation/pdf_annotator.py`), tagged by status. Built

@@ -5,6 +5,7 @@ including that an ambiguous match surfaces as its own WARNING row rather
 than silently validating against the wrong BOM line.
 """
 
+import pytest
 from pathlib import Path
 
 from app.parameters.storage import load_coc
@@ -27,7 +28,8 @@ def _coc_document(rows: list[list[str]] | None = None, text_lines: list[str] | N
     return make_parsed_document(table_rows=rows, text_elements=text_lines, filename="coc.pdf")
 
 
-def test_coc_matches_unique_bom_line_and_passes():
+@pytest.mark.asyncio
+async def test_coc_matches_unique_bom_line_and_passes():
     bom = ingest_bom(
         "proj-1",
         _bom_document(
@@ -39,7 +41,7 @@ def test_coc_matches_unique_bom_line_and_passes():
         contract_date="2026-01-01",
     )
 
-    coc = ingest_and_validate_coc(
+    coc = await ingest_and_validate_coc(
         bom,
         _coc_document([["Part No.", "PO No.", "Qty"], ["ABC-123", "PO-1", "10"]]),
         _SAMPLE_PDF,
@@ -51,7 +53,8 @@ def test_coc_matches_unique_bom_line_and_passes():
     assert not any(v.parameter == "bom_match" for v in coc.validations)
 
 
-def test_coc_ambiguous_match_is_flagged_not_silently_matched_to_wrong_line():
+@pytest.mark.asyncio
+async def test_coc_ambiguous_match_is_flagged_not_silently_matched_to_wrong_line():
     bom = ingest_bom(
         "proj-2",
         _bom_document(
@@ -64,7 +67,7 @@ def test_coc_ambiguous_match_is_flagged_not_silently_matched_to_wrong_line():
         contract_date="2026-01-01",
     )
 
-    coc = ingest_and_validate_coc(
+    coc = await ingest_and_validate_coc(
         bom,
         _coc_document([["Part No.", "PO No.", "Qty"], ["ABC-123", "PO-1", "10"]]),
         _SAMPLE_PDF,
@@ -76,14 +79,15 @@ def test_coc_ambiguous_match_is_flagged_not_silently_matched_to_wrong_line():
     assert "2 BOM lines" in bom_match.reason
 
 
-def test_coc_no_match_is_flagged_distinctly_from_ambiguous():
+@pytest.mark.asyncio
+async def test_coc_no_match_is_flagged_distinctly_from_ambiguous():
     bom = ingest_bom(
         "proj-3",
         _bom_document([["Part No.", "Description", "Qty"], ["ABC-123", "Circuit Breaker", "10"]]),
         contract_date="2026-01-01",
     )
 
-    coc = ingest_and_validate_coc(
+    coc = await ingest_and_validate_coc(
         bom,
         _coc_document([["Part No.", "Qty"], ["DOES-NOT-EXIST", "10"]]),
         _SAMPLE_PDF,
@@ -95,21 +99,22 @@ def test_coc_no_match_is_flagged_distinctly_from_ambiguous():
     assert "No matching BOM item" in bom_match.reason
 
 
-def test_partial_shipment_passes_and_completes_across_two_cocs():
+@pytest.mark.asyncio
+async def test_partial_shipment_passes_and_completes_across_two_cocs():
     bom = ingest_bom(
         "proj-5",
         _bom_document([["Part No.", "Description", "Qty"], ["ABC-123", "Circuit Breaker", "100"]]),
         contract_date="2026-01-01",
     )
 
-    first = ingest_and_validate_coc(
+    first = await ingest_and_validate_coc(
         bom, _coc_document([["Part No.", "Qty"], ["ABC-123", "40"]]), _SAMPLE_PDF
     )
     first_qty = next(v for v in first.validations if v.parameter == "quantity")
     assert first_qty.status == "PASS"
     assert "Partial delivery" in first_qty.reason
 
-    second = ingest_and_validate_coc(
+    second = await ingest_and_validate_coc(
         bom, _coc_document([["Part No.", "Qty"], ["ABC-123", "60"]]), _SAMPLE_PDF
     )
     second_qty = next(v for v in second.validations if v.parameter == "quantity")
@@ -117,23 +122,25 @@ def test_partial_shipment_passes_and_completes_across_two_cocs():
     assert "Completes the order" in second_qty.reason
 
 
-def test_third_coc_exceeding_bom_total_fails():
+@pytest.mark.asyncio
+async def test_third_coc_exceeding_bom_total_fails():
     bom = ingest_bom(
         "proj-6",
         _bom_document([["Part No.", "Description", "Qty"], ["ABC-123", "Circuit Breaker", "100"]]),
         contract_date="2026-01-01",
     )
 
-    ingest_and_validate_coc(bom, _coc_document([["Part No.", "Qty"], ["ABC-123", "60"]]), _SAMPLE_PDF)
-    ingest_and_validate_coc(bom, _coc_document([["Part No.", "Qty"], ["ABC-123", "30"]]), _SAMPLE_PDF)
-    third = ingest_and_validate_coc(bom, _coc_document([["Part No.", "Qty"], ["ABC-123", "20"]]), _SAMPLE_PDF)
+    await ingest_and_validate_coc(bom, _coc_document([["Part No.", "Qty"], ["ABC-123", "60"]]), _SAMPLE_PDF)
+    await ingest_and_validate_coc(bom, _coc_document([["Part No.", "Qty"], ["ABC-123", "30"]]), _SAMPLE_PDF)
+    third = await ingest_and_validate_coc(bom, _coc_document([["Part No.", "Qty"], ["ABC-123", "20"]]), _SAMPLE_PDF)
 
     third_qty = next(v for v in third.validations if v.parameter == "quantity")
     assert third_qty.status == "FAIL"
     assert "exceeds BOM" in third_qty.reason
 
 
-def test_annotation_failure_does_not_prevent_coc_from_being_saved(monkeypatch):
+@pytest.mark.asyncio
+async def test_annotation_failure_does_not_prevent_coc_from_being_saved(monkeypatch):
     def _boom(*args, **kwargs):
         raise RuntimeError("simulated PyMuPDF failure (e.g. malformed bbox / corrupt PDF)")
 
@@ -146,7 +153,7 @@ def test_annotation_failure_does_not_prevent_coc_from_being_saved(monkeypatch):
     )
 
     # Must not raise, even though annotate_pdf always throws.
-    coc = ingest_and_validate_coc(
+    coc = await ingest_and_validate_coc(
         bom, _coc_document([["Part No.", "Qty"], ["ABC-123", "10"]]), _SAMPLE_PDF
     )
 
@@ -155,7 +162,8 @@ def test_annotation_failure_does_not_prevent_coc_from_being_saved(monkeypatch):
     assert load_coc(coc.coc_id) is not None
 
 
-def test_quantity_tiebreaker_resolves_duplicate_part_across_two_lots():
+@pytest.mark.asyncio
+async def test_quantity_tiebreaker_resolves_duplicate_part_across_two_lots():
     bom = ingest_bom(
         "proj-4",
         _bom_document(
@@ -168,7 +176,7 @@ def test_quantity_tiebreaker_resolves_duplicate_part_across_two_lots():
         contract_date="2026-01-01",
     )
 
-    coc = ingest_and_validate_coc(
+    coc = await ingest_and_validate_coc(
         bom,
         _coc_document([["Part No.", "PO No.", "Qty"], ["ABC-123", "PO-1", "25"]]),
         _SAMPLE_PDF,

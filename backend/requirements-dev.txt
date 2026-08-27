@@ -6,6 +6,7 @@
 # `pip install -r requirements-dev.txt` alone is enough to run `pytest` —
 # no need to also install requirements.txt.
 pytest==8.3.3
+pytest-asyncio==0.24.0
 pydantic==2.9.2
 pydantic-settings==2.5.2
 rapidfuzz==3.9.7
