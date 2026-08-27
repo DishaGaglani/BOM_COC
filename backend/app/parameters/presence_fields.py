@@ -10,9 +10,21 @@ from app.parsing.schema import ParsedElement
 # a text presence check, not real signature/seal image detection: a scanned
 # COC with no OCR text on that page will never match here even if a real
 # signature is physically on it.
+# The seal pattern deliberately does NOT include a bare `\bseal\b` catch-all
+# — "sealed enclosure", "rubber seal", "O-ring seal" are common part
+# descriptions on a BOM/COC and would false-PASS a compliance check that's
+# actually about a physical company seal mark. Each alternative below
+# requires the compliance-specific phrasing, not just the word "seal".
 PRESENCE_PATTERNS: dict[str, re.Pattern] = {
     "signature": re.compile(r"authoris?ed\s+signatory|signature|signed\s+by", re.IGNORECASE),
-    "seal": re.compile(r"\b(company|official)\s+(seal|stamp)\b|\bseal\b", re.IGNORECASE),
+    "seal": re.compile(
+        r"\b(company|official)\s+(seal|stamp)\b"
+        r"|\bseal(?:ed)?\s*(?:&|and|/)\s*signat"
+        r"|\bsignat\w*\s*(?:&|and|/)\s*seal\b"
+        r"|\bseal\s+of\s+the\s+company\b"
+        r"|\bsealed\s+by\s+the\s+company\b",
+        re.IGNORECASE,
+    ),
     "test_certificate": re.compile(r"test\s+certificate|test\s+report|type\s+test|\btc\s*no\b", re.IGNORECASE),
     "import_documents": re.compile(r"bill\s+of\s+entry|import\s+licen[cs]e|customs\s+clearance|import\s+document", re.IGNORECASE),
     "authorization_letter": re.compile(r"authoris?ation\s+letter|letter\s+of\s+authoris?ation", re.IGNORECASE),

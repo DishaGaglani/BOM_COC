@@ -26,3 +26,30 @@ def test_only_matches_each_field_once_across_elements():
     elements = [_element("Signature: John Doe"), _element("Signed by: Jane Doe")]
     fields = extract_presence_fields(elements)
     assert len([f for f in fields if f.field_name == "signature"]) == 1
+
+
+def test_seal_pattern_recognizes_real_compliance_phrasings():
+    for text in [
+        "This certificate bears the Company Seal.",
+        "Official Stamp affixed below.",
+        "Seal & Signature of Authorized Signatory",
+        "Signature and Seal",
+        "Seal of the Company",
+        "Sealed by the Company on this date",
+    ]:
+        fields = extract_presence_fields([_element(text)])
+        assert any(f.field_name == "seal" for f in fields), f"expected a seal match in: {text!r}"
+
+
+def test_seal_pattern_ignores_seal_as_a_part_description():
+    # Regression: a bare `seal` match used to false-PASS the compliance
+    # check on any BOM/COC line mentioning a gasket/O-ring/rubber seal.
+    for text in [
+        "The enclosure is sealed for weatherproofing.",
+        "Rubber seal, part no. RS-100",
+        "O-ring seal assembly included",
+        "Vacuum sealed packaging",
+        "Seal replacement kit",
+    ]:
+        fields = extract_presence_fields([_element(text)])
+        assert not any(f.field_name == "seal" for f in fields), f"unexpected seal match in: {text!r}"

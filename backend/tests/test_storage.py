@@ -12,6 +12,7 @@ import pytest
 
 from app.parameters.schema import BOM, COC
 from app.parameters.storage import (
+    create_bom_version,
     get_active_bom,
     get_next_bom_version,
     list_boms,
@@ -101,10 +102,12 @@ def test_save_bom_version_collision_raises_value_error_not_silent_overwrite():
 
 
 def test_concurrent_uploads_for_same_project_do_not_silently_corrupt():
-    # Reproduces the original bug scenario under real thread concurrency:
-    # two uploads for the same project both call get_next_bom_version(),
-    # both read "prior = v1, next = 2" before either writes (forced via the
-    # barrier), then both try to save version 2. Exactly one may win.
+    # save_bom's UNIQUE(project_id, version) safety net in isolation — if
+    # something upstream ever races into a genuine version collision, this
+    # fails loudly and retryably rather than one BOM silently overwriting
+    # another. bom_service.ingest_bom itself no longer goes through this
+    # two-call read-then-write shape (see the create_bom_version test
+    # below, which closes the race outright rather than just failing safe).
     project_id = "proj-concurrent"
     save_bom(_bom(project_id, 1, status="active"))
 
@@ -137,6 +140,44 @@ def test_concurrent_uploads_for_same_project_do_not_silently_corrupt():
     assert len(failed) == 1
     assert succeeded[0].version == 2
     assert load_bom(succeeded[0].bom_id) is not None
+
+
+def test_create_bom_version_fully_closes_the_race():
+    # The real write path (bom_service.ingest_bom -> create_bom_version):
+    # two concurrent calls for the same project, released together via the
+    # barrier at the point where each has committed to *starting* its
+    # transaction. Unlike the save_bom-level test above, BOTH must succeed
+    # here — with sequential versions — because BEGIN IMMEDIATE serializes
+    # them instead of letting them both read the same "next version".
+    project_id = "proj-atomic"
+    create_bom_version(project_id, lambda v: _bom(project_id, v))
+
+    barrier = threading.Barrier(2)
+    results: list[BOM] = []
+    errors: list[Exception] = []
+
+    def upload():
+        barrier.wait()
+        try:
+            results.append(create_bom_version(project_id, lambda v: _bom(project_id, v)))
+        except Exception as exc:  # noqa: BLE001 - want to see anything unexpected too
+            errors.append(exc)
+
+    threads = [threading.Thread(target=upload) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == []
+    assert len(results) == 2
+    assert sorted(r.version for r in results) == [2, 3]
+    # Both actually persisted, not just returned.
+    for r in results:
+        assert load_bom(r.bom_id) is not None
+    # Exactly one is active (the later version); the other got superseded.
+    active = get_active_bom(project_id)
+    assert active.version == 3
 
 
 def test_updating_an_existing_bom_does_not_trip_the_version_constraint():

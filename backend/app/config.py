@@ -11,6 +11,11 @@ class Settings(BaseSettings):
     max_upload_mb: int = 100
     default_strategy: str = "auto"  # auto | fast | hi_res | ocr_only
     ocr_languages: str = "eng"
+    # If unset, auth is a no-op (local `uvicorn --reload` stays friction-free).
+    # If set, every /api/* and /documents/* route requires a matching X-API-Key header.
+    api_key: str | None = None
+    allowed_origins: list[str] = ["http://localhost:5173"]
+    parse_timeout_seconds: int = 120
 
     @property
     def upload_dir(self) -> Path:

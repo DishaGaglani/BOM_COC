@@ -71,8 +71,33 @@ def test_parse_date_fuzzy_prose():
     assert parse_date("Date of Issue: 12th August 2026") == date(2026, 8, 12)
 
 
+def test_parse_date_realistic_coc_phrasings():
+    # Audit sweep beyond the ISO-specific bug (see
+    # test_parse_date_iso_not_misread_as_dayfirst) — realistic date strings
+    # a COC/BOM might actually carry, all as isolated field values (the only
+    # way parse_date is ever called in practice: a label:value regex
+    # capture or a table cell, never a whole noisy sentence).
+    assert parse_date("12th August, 2026") == date(2026, 8, 12)
+    assert parse_date("12-Aug-2026") == date(2026, 8, 12)
+    assert parse_date("12.08.2026") == date(2026, 8, 12)
+    assert parse_date("Aug 12, 2026") == date(2026, 8, 12)
+    assert parse_date("August 12 2026") == date(2026, 8, 12)
+    assert parse_date("Dated 12.08.26") == date(2026, 8, 12)
+    assert parse_date("12-08-26") == date(2026, 8, 12)
+    assert parse_date("01.02.2026") == date(2026, 2, 1)  # dayfirst -> Feb 1
+
+
 def test_parse_date_unparseable_returns_none():
     assert parse_date("see attached schedule") is None
+
+
+def test_parse_date_multiple_numbers_fails_safe_not_wrong():
+    # Not a realistic real-world input (parse_date only ever receives an
+    # already-isolated field value in this codebase) but worth locking down:
+    # dateutil's fuzzy parser declines outright rather than guessing when a
+    # string has more than one plausible numeric token, so this fails safe
+    # (None -> a WARNING upstream) instead of silently picking the wrong one.
+    assert parse_date("PO No. 12345 dated 12.08.2026") is None
 
 
 def test_parse_date_none_returns_none():

@@ -2,6 +2,8 @@
 # Verified against real L&T BOM/COC samples during the original Phase 1
 # build; carried forward unchanged into the unstructured.io-based rewrite.
 
+from rapidfuzz import fuzz
+
 FIELD_SYNONYMS: dict[str, str] = {
     "part no": "part_id",
     "part number": "part_id",
@@ -91,4 +93,39 @@ def normalize_label(raw_label: str) -> str | None:
     if not raw_label:
         return None
     key = raw_label.strip().lower().rstrip(":")
-    return FIELD_SYNONYMS.get(key)
+    return FIELD_SYNONYMS.get(key) or _fuzzy_match(key)
+
+
+# A typo'd/unseen header ("Pat No.", "Qnty") shouldn't just fall through and
+# silently drop the whole column (or, for a BOM, the whole table) — but
+# character-level fuzzy matching alone is NOT safe here. FIELD_SYNONYMS
+# deliberately contains near-duplicate strings for genuinely DIFFERENT
+# fields: "manufactured" (-> manufacturing_year) vs "manufacturer"
+# (-> manufacturer) score ~92% similar by plain ratio; "part number"
+# (-> part_id) vs "po number" (-> po_numbers) score 80%. A bare top-1 fuzzy
+# match risks silently mapping a column to the WRONG field, which is worse
+# than not mapping it at all. So the best match must also beat the best
+# match for every other canonical field by a healthy margin — a near-tie
+# between two different fields (e.g. a truncated "manufactur", genuinely
+# ambiguous between the two) is left unmapped rather than guessed.
+_FUZZY_SCORE_THRESHOLD = 80
+_FUZZY_MARGIN_THRESHOLD = 10
+
+
+def _fuzzy_match(key: str) -> str | None:
+    best_per_field: dict[str, float] = {}
+    for synonym, field in FIELD_SYNONYMS.items():
+        score = fuzz.ratio(key, synonym)
+        if score > best_per_field.get(field, -1.0):
+            best_per_field[field] = score
+
+    if not best_per_field:
+        return None
+
+    ranked = sorted(best_per_field.items(), key=lambda item: item[1], reverse=True)
+    top_field, top_score = ranked[0]
+    runner_up_score = ranked[1][1] if len(ranked) > 1 else 0.0
+
+    if top_score >= _FUZZY_SCORE_THRESHOLD and (top_score - runner_up_score) >= _FUZZY_MARGIN_THRESHOLD:
+        return top_field
+    return None

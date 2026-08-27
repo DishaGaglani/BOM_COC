@@ -26,3 +26,19 @@ def test_item_no_outranks_part_no_for_part_id():
 def test_total_outranks_qty_per_unit_for_quantity():
     col_map = map_table_headers(["Qty per Unit", "Total"])
     assert col_map == {1: "quantity"}
+
+
+def test_typo_d_header_no_longer_drops_the_whole_column():
+    # Before the fuzzy fallback, an unrecognized header meant the column —
+    # and if it was the only recognizable one, the whole table — was
+    # silently skipped. "Pat No." is a one-letter typo of "Part No.".
+    col_map = map_table_headers(["Pat No.", "Description", "Qy"])
+    assert col_map == {0: "part_id", 1: "description", 2: "quantity"}
+
+
+def test_exact_priority_header_still_wins_over_a_fuzzy_matched_one():
+    # A fuzzy-resolved header has no entry in FIELD_LABEL_PRIORITY, so it
+    # should never outrank a properly-spelled priority header for the same
+    # field ("Item No." should still beat a typo'd Part No. variant).
+    col_map = map_table_headers(["Pat No.", "Item No."])
+    assert col_map == {1: "part_id"}

@@ -25,6 +25,7 @@ const PARAMETER_LABEL: Record<string, string> = {
 export default function ValidationReport({ coc }: { coc: COC }) {
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
 
   useEffect(() => {
     getReport(coc.coc_id)
@@ -32,14 +33,33 @@ export default function ValidationReport({ coc }: { coc: COC }) {
       .catch((err) => setError(err instanceof Error ? err.message : "Couldn't load this report."));
   }, [coc.coc_id]);
 
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    highlightedPdfUrl(coc.coc_id).then((url) => {
+      if (cancelled) {
+        URL.revokeObjectURL(url);
+        return;
+      }
+      objectUrl = url;
+      setPdfUrl(url);
+    });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [coc.coc_id]);
+
   return (
     <div className="panel">
       <div className="entry-header">
         <h3>{coc.filename}</h3>
         {report && <StatusBadge status={report.overall_status} />}
-        <a href={highlightedPdfUrl(coc.coc_id)} target="_blank" rel="noreferrer" className="pdf-link">
-          Download annotated PDF ↗
-        </a>
+        {pdfUrl && (
+          <a href={pdfUrl} target="_blank" rel="noreferrer" className="pdf-link">
+            Download annotated PDF ↗
+          </a>
+        )}
       </div>
 
       {error && <p className="error">{error}</p>}

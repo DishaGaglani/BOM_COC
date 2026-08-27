@@ -36,10 +36,17 @@ offline VM.
 **Parameter extraction** (`app/parameters/`) — rule-based only: table header → canonical
 field mapping (`synonyms.py`, `table_headers.py` — validated against real L&T BOM/COC
 samples), inline label:value text, a PO-number prose fallback, and presence-only
-compliance markers (signature/seal/test certificate mentions). Each extraction carries a
-confidence score (`confidence.py`) reflecting how much that extraction method should be
-trusted — used to pick a winner when the same canonical field is extracted more than
-once with conflicting values.
+compliance markers (signature/seal/test certificate mentions). Header matching is exact
+first, falling back to a margin-based fuzzy match (`rapidfuzz`, score ≥80 *and* ≥10
+points clear of the runner-up canonical field) so a typo'd vendor header ("Pat No.",
+"Manufactur") still maps instead of silently dropping the column — the margin check
+exists because plain similarity alone isn't safe here: "manufactured" vs "manufacturer"
+score 91.7% similar despite being different fields. Presence markers require actual
+compliance phrasing ("company seal", "seal & signature", ...), not a bare keyword match,
+so a part *described* as having a seal/stamp doesn't register as a compliance PASS. Each
+extraction carries a confidence score (`confidence.py`) reflecting how much that
+extraction method should be trusted — used to pick a winner when the same canonical
+field is extracted more than once with conflicting values.
 - `POST /api/boms` — parses a BOM and extracts line items (one dict of canonical fields
   per table row: `part_id`, `description`, `manufacturer`, `quantity`, `po_number`, ...).
   Requires a detected table; raises if none is found. Superseds any prior active BOM for
@@ -92,24 +99,40 @@ records (parsed-document metadata, BOMs, COCs) live in SQLite, one JSON blob per
 plus a few indexed columns for the query patterns each caller actually needs (list by
 project, filter COCs by `bom_id`, order by upload time) — not a normalized relational
 redesign, just the same JSON documents behind SQLite instead of loose files, so writes
-are atomic and a `UNIQUE (project_id, version)` constraint on `boms` makes a version
-collision from two concurrent BOM uploads for the same project a loud, retryable
-`ValueError` instead of one silently overwriting the other. Raw binary files (the
-original upload, the highlighted PDF) stay on disk under `backend/storage/` — the
-parsing/annotation libraries need a real file path, not a blob — everything else is in
-`backend/storage/bomcoc.db`.
+are atomic. BOM version assignment goes through `create_bom_version` (used by
+`bom_service.ingest_bom`), which reads the current active BOM, supersedes it, computes
+the next version, and inserts the new row all inside one `BEGIN IMMEDIATE` transaction —
+a second concurrent upload for the same project blocks on the write lock instead of
+reading the same "next version," so two concurrent uploads for one project now get
+correct sequential versions rather than one merely failing safe. The `UNIQUE
+(project_id, version)` constraint on `boms` remains as a safety net for any caller that
+bypasses `create_bom_version`. Raw binary files (the original upload, the highlighted
+PDF) stay on disk under `backend/storage/` — the parsing/annotation libraries need a
+real file path, not a blob — everything else is in `backend/storage/bomcoc.db`.
+
+**Security** (`app/auth.py`, `app/auth_core.py`, `app/parameters/file_signatures.py`) —
+- Optional API key: unset by default (local dev stays friction-free); set
+  `BOMCOC_API_KEY` and every `/api/*`/`/documents/*` route requires a matching
+  `X-API-Key` header (`/health` always stays open). The frontend reads the matching
+  `VITE_API_KEY` and attaches it to every request; the highlighted-PDF link is fetched
+  as an authenticated blob rather than a plain `<a href>`, since a header can't be
+  attached to a bare link.
+- CORS is restricted to `settings.allowed_origins` (default
+  `["http://localhost:5173"]`, overridable via `BOMCOC_ALLOWED_ORIGINS`) instead of `*`.
+- Uploads are checked against a magic-byte signature table
+  (`file_signatures.matches_signature`) in addition to the existing extension check, so
+  a mislabeled or malicious file (e.g. HTML renamed to `.pdf`) is rejected with 400
+  before it reaches `unstructured`.
+- Parsing runs off the event loop with a timeout
+  (`asyncio.wait_for(asyncio.to_thread(parse_document, ...), timeout=settings.parse_timeout_seconds)`,
+  default 120s, returns 504 on timeout) — previously a blocking sync call directly
+  inside an `async def` endpoint, so one slow parse stalled every other request too.
 
 ### Known gaps
 
 - No LLM/semantic comparison stage (per the architecture doc) — everything today is
   deterministic rules + confidence heuristics, no arbitration beyond "highest confidence
   wins" on conflicting extractions.
-- The BOM version-assignment race isn't fully closed, only made safe: `get_next_bom_version`
-  and the eventual `save_bom` are still two separate calls (`bom_service.ingest_bom`), so
-  two concurrent uploads for the same project can still both read the same "next version"
-  before either writes — the loser now gets a clear, retryable error instead of silently
-  overwriting the winner, but closing the race itself would mean collapsing that two-call
-  pattern into one storage-layer transaction.
 - The frontend header text ("Runs on this machine — Postgres + local Ollama") predates
   the rewrite and doesn't reflect the current stack — cosmetic cleanup pending.
 - Golden-file tests against the real samples in `review/` (through the actual

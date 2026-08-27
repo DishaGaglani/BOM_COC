@@ -1,4 +1,5 @@
 import sqlite3
+from typing import Callable
 
 from app.db import connect
 from app.parameters.schema import BOM, COC
@@ -28,14 +29,14 @@ def save_bom(bom: BOM) -> None:
                 ),
             )
         except sqlite3.IntegrityError as exc:
-            # The (project_id, version) UNIQUE constraint (app/db.py) is
-            # what actually closes the version-assignment race: two
-            # concurrent uploads for the same project can still both read
-            # the same "next version" via get_next_bom_version below, but
-            # only one of their save_bom() calls can win — the loser gets
-            # this, a clear signal to retry (which will then correctly see
-            # the winner's version and move past it), instead of silently
-            # overwriting the winner's BOM.
+            # The (project_id, version) UNIQUE constraint (app/db.py) is a
+            # safety net for any caller that assigns a version outside of
+            # create_bom_version's atomic transaction (below) and ends up
+            # colliding with another one — a clear, retryable failure
+            # instead of silently overwriting the winner's BOM. The actual
+            # write path (bom_service.ingest_bom) goes through
+            # create_bom_version, which prevents the collision from
+            # happening at all rather than just catching it here.
             raise ValueError(
                 f"BOM version conflict for project '{bom.project_id}' (version {bom.version}) — "
                 "another BOM upload for this project completed at the same moment. Please retry."
@@ -64,15 +65,57 @@ def get_active_bom(project_id: str) -> BOM | None:
 
 
 def get_next_bom_version(project_id: str) -> tuple[int, BOM | None]:
-    """Returns (next_version, prior_active_bom_or_None). This read can
-    still race with another caller's read of the same project (two
-    concurrent uploads both computing the same next version) — closing that
-    fully would mean collapsing the read-then-save_bom two-call pattern in
-    bom_service.ingest_bom into one storage-layer transaction. What's
-    guaranteed here is that the race can no longer end in silent data loss:
-    see save_bom's UNIQUE(project_id, version) handling."""
+    """Read-only preview of (next_version, prior_active_bom_or_None) — NOT
+    used for the actual write path any more (see create_bom_version below),
+    since this read alone can race with another caller's read of the same
+    project. Kept for read-only introspection / tests."""
     prior = get_active_bom(project_id)
     return ((prior.version + 1) if prior else 1), prior
+
+
+def create_bom_version(project_id: str, build_bom: "Callable[[int], BOM]") -> BOM:
+    """Atomically assigns the next version for `project_id`, marks any
+    prior active BOM as superseded, and inserts the new BOM built by
+    `build_bom(next_version)` — all inside one `BEGIN IMMEDIATE` transaction.
+    That's what actually closes the version-assignment race:
+    get_next_bom_version() + save_bom() as two separate calls (the old
+    bom_service.ingest_bom shape) could still have two concurrent uploads
+    for the same project both read the same "next version" before either
+    wrote — save_bom's UNIQUE(project_id, version) constraint turned that
+    into a safe, retryable failure but didn't prevent it. BEGIN IMMEDIATE
+    acquires the write lock up front, so a second concurrent call for the
+    same project blocks until this transaction commits, then correctly
+    computes the version after it — both calls succeed, with sequential
+    versions, instead of one failing."""
+    with connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT data FROM boms WHERE project_id = ? AND status = 'active' ORDER BY version DESC LIMIT 1",
+            (project_id,),
+        ).fetchone()
+        prior = BOM.model_validate_json(row["data"]) if row else None
+        next_version = (prior.version + 1) if prior else 1
+
+        if prior is not None:
+            prior.status = "superseded"
+            conn.execute(
+                "UPDATE boms SET status = ?, data = ? WHERE bom_id = ?",
+                (prior.status, prior.model_dump_json(), prior.bom_id),
+            )
+
+        new_bom = build_bom(next_version)
+        conn.execute(
+            "INSERT INTO boms (bom_id, project_id, version, status, uploaded_at, data) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                new_bom.bom_id,
+                new_bom.project_id,
+                new_bom.version,
+                new_bom.status,
+                new_bom.uploaded_at.isoformat(),
+                new_bom.model_dump_json(),
+            ),
+        )
+        return new_bom
 
 
 def save_coc(coc: COC) -> None:
