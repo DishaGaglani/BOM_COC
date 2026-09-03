@@ -11,6 +11,7 @@ real forjinn call against review/MDP BOM.pdf).
 import pytest
 
 from app.services import semantic_extractor
+from app.services.forjinn_client import AgentResponseError
 from tests.factories import make_parsed_document
 
 
@@ -66,3 +67,37 @@ async def test_extract_coc_coerces_non_string_field_value_and_raw_label(monkeypa
     assert fields[0].field_value == "12"
     assert fields[0].raw_label == "42"
     assert fields[1].field_value == "Authorised Signatory"
+
+
+@pytest.mark.asyncio
+async def test_extract_bom_raises_agent_response_error_on_unparsable_quantity(monkeypatch):
+    """quantity is a typed BOMItem field (float | None), not a requirements
+    entry — _coerce_str doesn't touch it, so a genuinely unparsable value
+    (not the bool/int mismatch _coerce_str exists for) should still surface
+    as a clear, caller-facing AgentResponseError instead of a raw pydantic
+    ValidationError."""
+
+    async def fake_call_agent(payload):
+        return {"bom_items": [{"part_id": "XL1", "quantity": "N/A"}], "contract_date": None}
+
+    monkeypatch.setattr(semantic_extractor, "call_agent", fake_call_agent)
+
+    with pytest.raises(AgentResponseError) as exc_info:
+        await semantic_extractor.extract_bom(make_parsed_document(table_rows=None))
+
+    assert "XL1" in str(exc_info.value)
+    assert "quantity" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_extract_coc_raises_agent_response_error_on_unparsable_page_number(monkeypatch):
+    async def fake_call_agent(payload):
+        return {"coc_fields": [{"field_name": "part_id", "field_value": "XL1", "page_number": "one"}]}
+
+    monkeypatch.setattr(semantic_extractor, "call_agent", fake_call_agent)
+
+    with pytest.raises(AgentResponseError) as exc_info:
+        await semantic_extractor.extract_coc(make_parsed_document(table_rows=None))
+
+    assert "part_id" in str(exc_info.value)
+    assert "page_number" in str(exc_info.value)

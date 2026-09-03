@@ -2,6 +2,7 @@ import asyncio
 import logging
 from pathlib import Path
 
+import httpx
 from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -21,6 +22,7 @@ from app.parsing.schema import ParsedDocument, ParsedDocumentSummary
 from app.parsing.unstructured_parser import SUPPORTED_EXTENSIONS, parse_document
 from app.services.bom_service import ingest_bom
 from app.services.coc_service import ingest_and_validate_coc
+from app.services.forjinn_client import ForjinnNotConfigured
 from app.services.report_service import build_validation_report
 from app.storage import list_parsed, load_parsed, save_parsed, save_upload
 
@@ -46,6 +48,34 @@ def health() -> dict:
 # is set (no-op otherwise) — see app/auth.py. /health stays open for
 # container/LB health checks regardless of auth config.
 router = APIRouter(dependencies=[Depends(require_api_key)])
+
+
+def _extraction_error_response(exc: Exception, *, filename: str | None = None) -> HTTPException:
+    """Turns a semantic extraction/validation failure into a clear,
+    correctly-coded response instead of leaking a raw exception straight to
+    the API caller. Without this, ForjinnNotConfigured and httpx.HTTPError
+    (network/timeout/non-2xx talking to forjinn) had no handling at all —
+    they fell through to FastAPI's generic 500 — and a pydantic
+    ValidationError from a malformed agent response surfaced as-is: a
+    multi-line dump aimed at a developer, not an API caller (see
+    AgentResponseError in forjinn_client.py, raised by semantic_extractor.py
+    with a one-line summary instead)."""
+    where = f" ({filename})" if filename else ""
+    if isinstance(exc, ForjinnNotConfigured):
+        return HTTPException(
+            status_code=503,
+            detail=f"Semantic extraction isn't configured on this server (BOMCOC_FORJINN_API_URL unset){where}.",
+        )
+    if isinstance(exc, httpx.HTTPError):
+        logger.exception("forjinn call failed%s", where)
+        return HTTPException(
+            status_code=502,
+            detail=f"The extraction agent is unreachable or returned an error — try again in a moment{where}.",
+        )
+    # ValueError and subclasses: business-rule failures (e.g. "no BOM-shaped
+    # table found") and AgentResponseError (malformed agent response) both
+    # already carry a clear, caller-facing message.
+    return HTTPException(status_code=422, detail=f"{exc}{where}")
 
 
 async def _receive_and_parse(file: UploadFile, strategy: str | None) -> tuple[ParsedDocument, Path]:
@@ -138,8 +168,8 @@ async def api_upload_bom(
     document, _ = await _receive_and_parse(file, strategy)
     try:
         bom = await ingest_bom(project_id, document, contract_date=contract_date)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (ValueError, ForjinnNotConfigured, httpx.HTTPError) as exc:
+        raise _extraction_error_response(exc, filename=file.filename) from exc
     logger.info(
         "Ingested BOM %s (project=%s, version=%d, contract_date=%s) -> %d items",
         bom.filename, project_id, bom.version, bom.contract_date, len(bom.items),
@@ -186,7 +216,22 @@ async def api_upload_cocs(
     records: list[COC] = []
     for file in files:
         document, stored_path = await _receive_and_parse(file, strategy)
-        coc = await ingest_and_validate_coc(bom, document, stored_path)
+        try:
+            coc = await ingest_and_validate_coc(bom, document, stored_path)
+        except (ValueError, ForjinnNotConfigured, httpx.HTTPError) as exc:
+            # Earlier files in this batch, if any, are already validated and
+            # saved (ingest_and_validate_coc persists before returning) —
+            # say so, since without this note a caller would only see this
+            # one file's error and might assume the whole batch was lost
+            # and needs re-uploading.
+            saved_note = (
+                f" {len(records)} earlier file(s) in this batch were already validated and saved — "
+                f"see GET /api/boms/{bom_id}/cocs."
+                if records else ""
+            )
+            error = _extraction_error_response(exc, filename=file.filename)
+            error.detail = f"{error.detail}{saved_note}"
+            raise error from exc
         logger.info("Validated COC %s -> %d fields, %d validations", coc.filename, len(coc.fields), len(coc.validations))
         records.append(coc)
 

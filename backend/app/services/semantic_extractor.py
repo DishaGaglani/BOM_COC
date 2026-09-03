@@ -24,9 +24,11 @@ forjinn_client.call_agent transport, distinguished by the "task" field below.
 
 from typing import TYPE_CHECKING
 
+from pydantic import ValidationError
+
 from app.parameters.html_table import parse_html_table
 from app.parameters.schema import CANONICAL_FIELDS, BOMItem, ExtractedField
-from app.services.forjinn_client import call_agent
+from app.services.forjinn_client import AgentResponseError, call_agent
 
 if TYPE_CHECKING:
     from app.parsing.schema import ParsedDocument
@@ -107,6 +109,16 @@ def _coerce_str(value: object) -> str | None:
     return str(value)
 
 
+def _summarize_validation_error(exc: ValidationError) -> str:
+    """A one-line, non-leaky summary of a pydantic ValidationError, for
+    AgentResponseError messages — the raw exception text is a multi-line
+    dump with a docs URL that's not useful to an API caller, and
+    _coerce_str already handles the one type mismatch that's actually
+    common (bool/number where a string was expected), so anything that
+    still lands here is a genuinely unexpected shape worth naming plainly."""
+    return "; ".join(f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}" for err in exc.errors())
+
+
 async def _call_agent(payload: dict) -> dict:
     """Sends payload to the forjinn agent with task="extract" and returns its
     structured response, expected to have the shape:
@@ -130,9 +142,12 @@ async def _call_agent(payload: dict) -> dict:
     shape has to satisfy those pydantic models — this is the contract the
     forjinn agent needs to be built/prompted against.
 
-    Raises ForjinnNotConfigured (via call_agent) if forjinn_api_url is unset —
-    extraction has no rule-based fallback anymore, so that propagates up to
-    the caller rather than being swallowed here.
+    Raises ForjinnNotConfigured (via call_agent) if forjinn_api_url is unset,
+    httpx.HTTPError on a transport/status failure, or AgentResponseError (via
+    extract_bom/extract_coc below) if the response doesn't match the
+    contract above — extraction has no rule-based fallback anymore, so all
+    of these propagate up to the caller (see main.py's error handling)
+    rather than being swallowed here.
     """
     return await call_agent({"task": "extract", **payload})
 
@@ -151,7 +166,13 @@ async def extract_bom(document: "ParsedDocument") -> tuple[list[BOMItem], str | 
             for key, value in (fields.get("requirements") or {}).items()
             if value is not None
         }
-        items.append(BOMItem(item_id=item.get("item_id") or _new_item_id(), **fields))
+        try:
+            items.append(BOMItem(item_id=item.get("item_id") or _new_item_id(), **fields))
+        except ValidationError as exc:
+            raise AgentResponseError(
+                f"extraction agent returned a BOM line item (part_id={fields.get('part_id')!r}) "
+                f"that doesn't match the expected shape: {_summarize_validation_error(exc)}"
+            ) from exc
     return items, result.get("contract_date")
 
 
@@ -166,16 +187,22 @@ async def extract_coc(document: "ParsedDocument") -> list[ExtractedField]:
         field_value = _coerce_str(raw.get("field_value"))
         if not field_value:
             continue
-        fields.append(ExtractedField(**{
-            **raw,
-            "field_value": field_value,
-            "raw_label": _coerce_str(raw.get("raw_label")),
-            # extraction_method is always "semantic" for everything this
-            # pipeline produces (see ExtractionMethod in parameters/schema.py)
-            # — set here rather than asking the agent to repeat a constant on
-            # every field.
-            "extraction_method": "semantic",
-        }))
+        try:
+            fields.append(ExtractedField(**{
+                **raw,
+                "field_value": field_value,
+                "raw_label": _coerce_str(raw.get("raw_label")),
+                # extraction_method is always "semantic" for everything this
+                # pipeline produces (see ExtractionMethod in parameters/schema.py)
+                # — set here rather than asking the agent to repeat a constant on
+                # every field.
+                "extraction_method": "semantic",
+            }))
+        except ValidationError as exc:
+            raise AgentResponseError(
+                f"extraction agent returned a COC field (field_name={raw.get('field_name')!r}) "
+                f"that doesn't match the expected shape: {_summarize_validation_error(exc)}"
+            ) from exc
     return fields
 
 
