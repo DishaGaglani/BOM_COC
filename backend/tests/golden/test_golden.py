@@ -56,7 +56,10 @@ async def test_mdp_bom_extraction_matches_hand_verified_fields():
 
     fixture = _load_fixture("mdp_bom.json")
     document = parse_document(str(_REVIEW_DIR / "MDP BOM.pdf"), "MDP BOM.pdf")
-    items, _contract_date = await extract_bom(document)
+    items, contract_date = await extract_bom(document)
+
+    if "contract_date" in fixture:
+        assert contract_date == fixture["contract_date"]
 
     by_part_id = {item.part_id: item for item in items}
 
@@ -105,7 +108,8 @@ async def test_xl62339_coc_extraction_matches_hand_verified_fields():
     # Deliberately not asserted: presence-only fields (signature, seal,
     # test_certificate, import_documents, authorization_letter). Whether the
     # agent judges a given phrase as solid-enough evidence to report is a
-    # genuine judgment call on borderline text, confirmed to flicker
-    # between identical calls against this same document — asserting on it
-    # would make this suite flaky for no real signal (see this module's
-    # docstring on what is/isn't asserted exactly, and why).
+    # genuine judgment call on borderline text, confirmed to flicker between
+    # identical calls against this same document even after the 2026-09-03
+    # prompt fixes below — asserting on it would make this suite flaky for
+    # no real signal (see this module's docstring on what is/isn't asserted
+    # exactly, and why).

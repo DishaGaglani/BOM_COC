@@ -37,30 +37,53 @@ this suite to take a few minutes, not the sub-second fast suite.
 ## What's asserted, and what deliberately isn't
 
 The forjinn agent isn't temperature-0. Repeated live calls against the
-*same* document, byte-for-byte, were observed in practice to vary on:
+*same* document, byte-for-byte, were observed in practice to vary on
 borderline presence-only judgment calls (e.g. whether a signature block
-counted as solid evidence), and whether a secondary identifier (e.g. a COC's
-manufacturer part number, already redundant with `description`) got echoed
-as its own field or folded into the free text.
+counted as solid evidence) — this is still true after the 2026-09-03 prompt
+fixes below and isn't something a prompt edit fully closes off, so it stays
+deliberately unasserted.
 
 So this suite is exact only on fields with no legitimate reason to vary —
 identifiers (`part_id`, `po_numbers`), and short numeric/categorical values
 (`quantity`, `requirements` entries like `country_of_origin`/`grade`) — and
 loose everywhere else: free-text `description` is checked by keyword, not
 equality; presence-only fields (signature/seal/test_certificate/
-import_documents/authorization_letter) aren't asserted at all; and fields
-confirmed to flicker between calls (see `fixtures/xl62339_coc.json`'s
-`optional_fields`) are checked only when the agent happens to include them.
-A change here is either a real regression or a real (and worth knowing
-about) shift in agent behavior — not run-to-run wording noise.
+import_documents/authorization_letter) aren't asserted at all. A change here
+is either a real regression or a real (and worth knowing about) shift in
+agent behavior — not run-to-run wording noise. `test_golden.py` still
+supports an `optional_fields` fixture key (checked only when the agent
+happens to include the field) for any future field that turns out to need
+it — none currently do.
 
-One known, real extraction-accuracy gap found while building this (not a
-code bug, and not covered by an assertion): against `MDP BOM.pdf`, the agent
-extracted `contract_date` as `28.03.2022` — that's actually the document's
-internal *"R00 Approved Date"* from its revision-approval table, not a
-contract/PO date; the document's own "Date :" field is blank and it has no
-"PO Date" column. Worth a prompt fix on the forjinn side (out of this repo's
-control), tracked here rather than silently asserted as correct.
+Three extraction-accuracy gaps found while building this were fixed on
+2026-09-03 by editing the forjinn agent's system prompt directly (outside
+this repo — see `backend/forjinn_system_prompt*.txt` locally, gitignored):
+- `contract_date` on `MDP BOM.pdf` was extracting as `28.03.2022` — the
+  document's internal *"R00 Approved Date"* from its revision-approval
+  table, not a contract/PO date (the document's own "Date :" field is
+  blank and it has no "PO Date" column). The prompt now explicitly excludes
+  revision/approval-table dates and returns `null` when no genuine
+  PO/SO/contract date exists — confirmed fixed; `mdp_bom.json`'s fixture
+  now asserts `contract_date: null` for real.
+- `XL62339.pdf`'s COC `model` field flickered — sometimes folded into
+  `description` only instead of also being emitted on its own. The prompt
+  now explicitly requires emitting a distinct Part No./Model No. as `model`
+  every time; confirmed 3/3 across repeated live calls after the fix.
+  `xl62339_coc.json`'s fixture asserts it as a required field again.
+- Side effect of the `contract_date` fix's own wording (mentioning
+  `"SO.No: ..."` as an example): `MDP BOM.pdf`'s per-line `po_number` (which
+  should stay empty — this document has no per-line PO numbers, only a
+  document-level SO number) started leaking the SO number into `po_number`
+  on ~1/3 of live calls, a regression not present before that edit. Not
+  asserted by any fixture (`po_number` was never checked here), so it
+  wasn't caught by this suite going green — found by separately spot-
+  checking `po_number` after the first fix. A follow-up prompt clause
+  explicitly telling the agent never to reuse the document-level SO.No as a
+  line's `po_number` fixed it — confirmed clean across 5 further live calls.
+  Worth remembering for future prompt edits: a fix for one field's accuracy
+  can shift a *different*, previously-fine field's behavior, so a targeted
+  before/after check on the specific field you changed isn't enough —
+  spot-check nearby fields too.
 
 ## Adding another sample
 

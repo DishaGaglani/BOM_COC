@@ -1,6 +1,7 @@
 {
   "_source": "review/MDP BOM.pdf",
-  "_note": "A representative subset (not every line item), hand-verified against the document's own text on 2026-09-03 — see the 'Description Desig. L&T CAT No. Make Part No. Country of Origin ...' table starting page 2. Only fields with low wording variance are checked exactly (identifiers, manufacturer, numeric/short categorical requirements); description is checked by keyword only, since the agent's free-text phrasing of it can legitimately vary run to run.",
+  "_note": "A representative subset (not every line item), hand-verified against the document's own text on 2026-09-03 — see the 'Description Desig. L&T CAT No. Make Part No. Country of Origin ...' table starting page 2. Only fields with low wording variance are checked exactly (identifiers, manufacturer, numeric/short categorical requirements); description is checked by keyword only, since the agent's free-text phrasing of it can legitimately vary run to run. contract_date is null: this document's own 'Date :' field is blank and it has no 'PO Date' column — its only date-shaped text is an internal 'R00 Approved Date' from a revision-approval table, which is not a contract date (previously misextracted as one; fixed 2026-09-03 by an explicit exclusion added to the forjinn agent's system prompt).",
+  "contract_date": null,
   "items": {
     "XL19990": {
       "manufacturer_contains": "SOURIAU",

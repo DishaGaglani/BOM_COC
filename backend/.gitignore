@@ -3,3 +3,8 @@ __pycache__/
 *.pyc
 storage/
 *.db
+
+# forjinn agent's system prompt — external/hosted config, not this repo's
+# source of truth (forjinn.com owns the live version); kept locally for
+# reference only, never pushed.
+forjinn_system_prompt*.txt
