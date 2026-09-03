@@ -55,7 +55,7 @@ function App() {
         </div>
         <div>
           <h1>Traceability Ledger</h1>
-          <p className="title-block__meta">Runs on this machine — Postgres + local Ollama, no external API calls</p>
+          <p className="title-block__meta">Local parsing, semantic extraction &amp; validation via forjinn</p>
         </div>
       </header>
 
@@ -65,7 +65,12 @@ function App() {
           {libraryError && <p className="error">{libraryError}</p>}
           <BomLibrary
             boms={boms}
-            onCreated={(bom) => setBoms((prev) => [bom, ...prev])}
+            onCreated={(bom) => {
+              setBoms((prev) => [bom, ...prev]);
+              // Go straight to asking for the COC — no extra click to
+              // re-select the BOM we just uploaded.
+              selectBom(bom);
+            }}
             onSelect={selectBom}
           />
         </>

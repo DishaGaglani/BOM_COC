@@ -3,6 +3,7 @@ uvicorn[standard]==0.30.6
 python-multipart==0.0.9
 pydantic==2.9.2
 pydantic-settings==2.5.2
+httpx==0.28.1  # forjinn.com agent client (semantic extraction + validation)
 
 # Local (open-source) document parsing — no external API calls.
 # [pdf] pulls in unstructured-inference (layout model) + pdf2image + pytesseract for OCR.
@@ -24,7 +25,16 @@ transformers==4.44.2
 # unstructured's pdf partitioner import. Pin to the compatible version.
 pdfminer.six==20240706
 
-# Rule-based parameter extraction / validation.
+# layoutparser (pulled in by unstructured-inference above) unconditionally
+# depends on pdfplumber, unpinned — and every pdfplumber release compatible
+# with our pdfminer.six pin above doesn't exist, so pip's resolver backtracks
+# to ancient pdfplumber==0.5.3, which needs the abandoned, unbuildable-on-
+# Python-3.11+ `pycrypto`. MUST be installed (see vendor/fake-pycrypto/
+# README.md) before this file: `pip install ./vendor/fake-pycrypto pycryptodome`.
+pycryptodome==3.23.0  # provides the Crypto.* namespace pycrypto would have
+
+# Rule-based validation (app/validation/rules.py) — field extraction itself
+# is semantic now, via the forjinn agent (see httpx above).
 rapidfuzz==3.9.7
 python-dateutil==2.9.0.post0
 

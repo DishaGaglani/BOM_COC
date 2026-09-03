@@ -9,10 +9,11 @@ That's deliberately *not* the same as proving the pipeline still works on
 the real samples in `review/` (`49COC.pdf`, `COC LETTER MCB.pdf`, `MDP
 BOM.pdf`, `XL62339.pdf`, `xh02020.pdf`) — those exercise the full parsing
 stack: layout detection, OCR fallback, real table-structure recognition,
-and the header synonyms/regexes against actual vendor phrasing rather than
-hand-written fixtures. A change to `synonyms.py`, `table_headers.py`, or the
-extraction regexes can pass every unit test here and still silently stop
-matching a real document's headers.
+and the semantic extraction agent's field mapping (see
+`app/services/semantic_extractor.py`) against actual vendor phrasing rather
+than hand-written fixtures. A change to the agent's prompt/response
+handling can pass every unit test here and still silently stop matching a
+real document's headers.
 
 ## To build this
 

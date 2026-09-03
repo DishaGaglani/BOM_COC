@@ -11,10 +11,16 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 COPY requirements.txt .
+COPY vendor/fake-pycrypto vendor/fake-pycrypto
 # CPU-only torch: pulling the default (CUDA) build resolves multi-GB wheels
 # this GPU-less VM will never use. Needed by unstructured's table-structure
 # (Table Transformer) model, not just the layout model.
+# fake-pycrypto stub must install before requirements.txt — see
+# vendor/fake-pycrypto/README.md (pdfplumber, pulled in transitively via
+# layoutparser, resolves to an ancient version needing the unbuildable
+# real pycrypto without it).
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir ./vendor/fake-pycrypto \
     && pip install --no-cache-dir -r requirements.txt
 
 COPY . .

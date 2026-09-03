@@ -31,7 +31,7 @@ CANONICAL_FIELDS = [
     "is_imported",
 ]
 
-ExtractionMethod = Literal["table", "inline", "presence"]
+ExtractionMethod = Literal["semantic"]
 BOMStatus = Literal["active", "superseded"]
 ValidationStatus = Literal["PASS", "FAIL", "WARNING"]
 
@@ -43,11 +43,9 @@ class ExtractedField(BaseModel):
     bbox: BBox | None = None
     extraction_method: ExtractionMethod
     raw_label: str | None = None  # original document term, e.g. "P/N"
-    # How much this specific extraction should be trusted, 0-1. Grounded in
-    # a real signal where one exists (the hi_res layout model's detection
-    # confidence for table-sourced fields); a fixed heuristic constant per
-    # extraction method otherwise — see parameters/confidence.py. Used to
-    # pick a winner when multiple extractions disagree on the same field.
+    # How much this specific extraction should be trusted, 0-1 — set by the
+    # semantic extraction agent (see services/semantic_extractor.py). Used
+    # to pick a winner when multiple extractions disagree on the same field.
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
 
 

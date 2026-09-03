@@ -16,7 +16,7 @@ def make_field(field_name: str, field_value: str, confidence: float = 1.0, **kwa
     return ExtractedField(
         field_name=field_name,
         field_value=field_value,
-        extraction_method=kwargs.pop("extraction_method", "table"),
+        extraction_method=kwargs.pop("extraction_method", "semantic"),
         confidence=confidence,
         **kwargs,
     )

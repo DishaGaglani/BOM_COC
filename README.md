@@ -17,20 +17,29 @@ and the requirements in the L&T requirements email.
 
 ## Current state
 
-**Parsing & extraction** (`unstructured.io`) are deterministic and local — no LLM in that loop.
+**Parsing** (`unstructured.io`) is deterministic and local — no LLM in that loop, no
+documents leave the machine.
+
+**Extraction is semantic**, via a forjinn.com-hosted agent (Qwen-based;
+`app/services/semantic_extractor.py` + `forjinn_client.py`). It replaced an earlier
+rule-based layer (hand-maintained header-synonym dicts, priority-ordered column
+matching, regex label:value/presence detection) that couldn't generalize past the vendor
+phrasing it was written against. The agent is handed unstructured's already-structured
+output (table rows, text elements, each with page/bbox) and asked directly which
+canonical field each column/label/phrase means — see the system prompt this was built
+against for the exact contract. If `BOMCOC_FORJINN_API_URL` is unset, extraction has
+nothing to call and BOM/COC ingestion raises — there's no rule-based fallback anymore.
 
 **Validation** is two-tier: **Tier 1 (rule-based)** always runs, checking format, presence,
-dates, and exact/fuzzy matches against the BOM. **Tier 2 (Gemma via Ollama)** is optional —
-if `BOMCOC_OLLAMA_BASE_URL` is set on the VM, a local Gemma 7B model is pulled and used for
-holistic semantic validation after a successful BOM match. If Gemma is unavailable or
-disabled, Tier 1 checks alone are sufficient for compliance review — Gemma is an enhancement,
-not a requirement.
-
-The Ollama service (previously removed during the unstructured rewrite) has been re-added to
-`docker-compose.yml` — it pre-pulls the Gemma model on startup. The integration with the
-backend (`app/services/gemma_validator.py`) is scaffolded but not yet fully implemented — see
-the TODO comments there for what remains: prompt construction, the actual Ollama HTTP call,
-and parsing Gemma's response.
+dates, and exact/fuzzy matches against the BOM (`app/validation/rules.py`+`engine.py` —
+untouched by the extraction rewrite). **Tier 2 (semantic, via the same forjinn agent)** is
+optional — if `BOMCOC_FORJINN_API_URL` is set, the agent takes the extracted facts and
+validates them holistically after a successful BOM match. If semantic validation is
+unavailable or disabled, Tier 1 checks alone are sufficient for compliance review — it's
+an enhancement, not a requirement. See `app/services/semantic_validator.py` for the
+request/response contract — `_parse_agent_result`'s mapping of
+`passes_compliance`/`reasoning`/`missing_or_conflicting_fields` is confirmed against a
+real forjinn response.
 
 **Parsing** (`app/parsing/`) — upload → `unstructured`'s `partition()` dispatcher →
 typed elements (Title, NarrativeText, Table, etc.), tables kept as both plain text and
@@ -42,20 +51,15 @@ offline VM.
   output as a row in SQLite.
 - `GET /documents`, `GET /documents/{document_id}` — list / fetch parsed output.
 
-**Parameter extraction** (`app/parameters/`) — rule-based only: table header → canonical
-field mapping (`synonyms.py`, `table_headers.py` — validated against real L&T BOM/COC
-samples), inline label:value text, a PO-number prose fallback, and presence-only
-compliance markers (signature/seal/test certificate mentions). Header matching is exact
-first, falling back to a margin-based fuzzy match (`rapidfuzz`, score ≥80 *and* ≥10
-points clear of the runner-up canonical field) so a typo'd vendor header ("Pat No.",
-"Manufactur") still maps instead of silently dropping the column — the margin check
-exists because plain similarity alone isn't safe here: "manufactured" vs "manufacturer"
-score 91.7% similar despite being different fields. Presence markers require actual
-compliance phrasing ("company seal", "seal & signature", ...), not a bare keyword match,
-so a part *described* as having a seal/stamp doesn't register as a compliance PASS. Each
-extraction carries a confidence score (`confidence.py`) reflecting how much that
-extraction method should be trusted — used to pick a winner when the same canonical
-field is extracted more than once with conflicting values.
+**Parameter extraction** (`app/services/semantic_extractor.py`, `app/parameters/`) — the
+forjinn agent maps table columns/labels and prose to canonical fields (`part_id`,
+`description`, `manufacturer`, `quantity`, `po_numbers`, signature/seal/test-certificate
+presence, ...); `app/parameters/html_table.py` (stdlib-only, no guessing) turns
+unstructured's table HTML into plain rows-of-cells for the agent's payload, and
+`app/parameters/schema.py` defines the canonical field set both the agent and the
+validation rules key off of. Domain judgment calls that used to be hardcoded (e.g. a
+BOM's customer-catalog column outranking the manufacturer's own part number for
+`part_id`) now live in the agent's system prompt instead of a priority list in code.
 - `POST /api/boms` — parses a BOM and extracts line items (one dict of canonical fields
   per table row: `part_id`, `description`, `manufacturer`, `quantity`, `po_number`, ...).
   Requires a detected table; raises if none is found. Superseds any prior active BOM for
@@ -81,7 +85,7 @@ separate table elements is reassembled — a header-less fragment whose row widt
 immediately preceding table's columns is treated as that table's continuation, one page
 ahead only.
 
-**Validation** (`app/validation/` + `app/services/gemma_validator.py`) — two-tier validation
+**Validation** (`app/validation/` + `app/services/semantic_validator.py`) — two-tier validation
 per matched BOM line, run in sequence:
 1. **Tier 1: Fast rule-based checks** — identity-field presence (PO or Serial Number required),
    match (PO Number, Part ID, Model, Serial Number — exact first, falling back to a
@@ -93,14 +97,14 @@ per matched BOM line, run in sequence:
    date on/after the BOM's contract date, presence checks (signature, seal, test certificate,
    authorization letter), and import documents required only when the BOM marks that item as
    imported.
-2. **Tier 2: Semantic validation via Gemma** (optional, requires `BOMCOC_OLLAMA_BASE_URL` set) —
-   after a successful match, Gemma (running locally via Ollama on the VM) takes the extracted
-   facts and validates them holistically: "does this COC actually demonstrate compliance with
-   this BOM's requirements?" Gemma can catch nuance that rigid rules miss (e.g. a typo in part
-   number that's still obviously the same component in context, or a qualification that's valid
-   but in a non-standard format). If semantic validation is disabled or unavailable, only Tier 1
-   checks run — the tool remains fully functional for compliance review, just with less semantic
-   sophistication.
+2. **Tier 2: Semantic validation via forjinn** (optional, requires `BOMCOC_FORJINN_API_URL`
+   set) — after a successful match, the same forjinn-hosted Qwen agent that does field
+   extraction takes the extracted facts and validates them holistically: "does this COC
+   actually demonstrate compliance with this BOM's requirements?" It can catch nuance that
+   rigid rules miss (e.g. a typo in part number that's still obviously the same component in
+   context, or a qualification that's valid but in a non-standard format). If semantic
+   validation is disabled or unavailable, only Tier 1 checks run — the tool remains fully
+   functional for compliance review, just with less semantic sophistication.
 
    Every result is PASS / FAIL / WARNING with a human-readable reason.
 - `GET /api/cocs/{coc_id}/report` — parameter-by-parameter validation report.
@@ -150,14 +154,19 @@ real file path, not a blob — everything else is in `backend/storage/bomcoc.db`
 
 ### Known gaps
 
-- No LLM/semantic comparison stage (per the architecture doc) — everything today is
-  deterministic rules + confidence heuristics, no arbitration beyond "highest confidence
-  wins" on conflicting extractions.
-- The frontend header text ("Runs on this machine — Postgres + local Ollama") predates
-  the rewrite and doesn't reflect the current stack — cosmetic cleanup pending.
+- forjinn's response envelope and the "validate" task's response shape are both
+  confirmed against a real test call (unwrapped JSON directly at the top level; no
+  `Authorization` header needed against the current flow). The "extract" task's response
+  shape (`bom_items`/`coc_fields`/`contract_date` — see `semantic_extractor.py`) hasn't
+  been separately test-called yet — worth confirming before relying on a real BOM/COC
+  upload.
+- Extraction has no rule-based fallback — if forjinn is unreachable or misconfigured,
+  BOM/COC ingestion fails outright rather than degrading to a lesser result.
 - Golden-file tests against the real samples in `review/` (through the actual
   `unstructured` pipeline, not just fixtures) aren't built yet — see
   `backend/tests/golden/README.md`.
+- `backend/tests/test_services.py`'s end-to-end suite is skipped pending the above —
+  see its module-level `pytestmark`.
 
 ## Running locally (dev machine, without Docker)
 
@@ -165,8 +174,11 @@ Backend:
 ```
 cd backend
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
 # requires poppler and tesseract installed locally (brew install poppler tesseract on macOS)
+# vendor/fake-pycrypto MUST install before requirements.txt on Python 3.11+ —
+# see vendor/fake-pycrypto/README.md for why.
+pip install ./vendor/fake-pycrypto
+pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
@@ -201,8 +213,8 @@ exercises the actual parsing pipeline against the samples in `review/`.
 docker compose up --build
 ```
 
-The `postgres` and `ollama` services from the previous architecture were removed along
-with the old backend. Persistence is now SQLite (a file under the `backend` bind mount,
-so it survives container restarts same as before) — no separate DB service needed; only
-the Gemma-serving service remains to be re-added, once the parsed-output → LLM pipeline
-is built.
+The `postgres` and `ollama` services from earlier architectures have both been removed —
+persistence is SQLite (a file under the `backend` bind mount, so it survives container
+restarts), and semantic extraction/validation calls out to forjinn.com (see
+`BOMCOC_FORJINN_API_URL` in `docker-compose.yml`) instead of running a local model, so
+there's no model-serving container to run here at all.

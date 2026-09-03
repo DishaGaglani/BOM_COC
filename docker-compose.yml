@@ -1,25 +1,4 @@
 services:
-  ollama:
-    image: ollama/ollama:latest
-    ports:
-      - "11434:11434"
-    environment:
-      # CPU-only Ollama (no GPU). Pre-pull the gemma model at startup via the
-      # entrypoint script (see below).
-      OLLAMA_NUM_GPU: 0
-    volumes:
-      - ollama_models:/root/.ollama/models
-    command: >
-      sh -c "ollama pull gemma:7b && ollama serve"
-    # Timeout startup to 5m in case the model pull stalls (unreliable network
-    # on the target VM). If Ollama fails to start, the backend will gracefully
-    # skip semantic validation (no endpoint configured).
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
-      interval: 10s
-      timeout: 3s
-      retries: 30
-
   backend:
     build: ./backend
     environment:
@@ -30,18 +9,18 @@ services:
       # Origins allowed by CORS, as a JSON array; defaults to
       # ["http://localhost:5173"] if unset.
       # BOMCOC_ALLOWED_ORIGINS: '["http://localhost:5173"]'
-      # Gemma-via-Ollama for semantic COC-vs-BOM validation.
-      # Point to the ollama service (defined above); unset to disable semantic validation.
-      BOMCOC_OLLAMA_BASE_URL: http://ollama:11434
-      BOMCOC_OLLAMA_MODEL: gemma:7b
-      BOMCOC_OLLAMA_TIMEOUT_SECONDS: 60
+      # forjinn.com-hosted flow (Qwen agent) for semantic field extraction
+      # and COC-vs-BOM comparison — see app/services/forjinn_client.py.
+      # Unset to disable extraction entirely (BOM/COC ingestion will raise).
+      BOMCOC_FORJINN_API_URL: https://forjinn.com/api/v1/prediction/23715a87-e685-4ed3-9f07-98aeb705233a
+      # Uncomment if forjinn's endpoint ends up requiring an API key —
+      # unconfirmed as of writing (see forjinn_client.py's module docstring).
+      # BOMCOC_FORJINN_API_KEY: change-me
+      BOMCOC_FORJINN_TIMEOUT_SECONDS: 180
     volumes:
       - ./backend:/app
     ports:
       - "8000:8000"
-    depends_on:
-      ollama:
-        condition: service_healthy
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   frontend:
@@ -60,9 +39,7 @@ services:
 
 volumes:
   frontend_node_modules:
-  ollama_models:
 
-# The Ollama service (re-added) pre-pulls the Gemma 7B model on startup so it
-# is ready for semantic COC-vs-BOM validation (once app/services/gemma_validator.py
-# is fully wired). Persistence is SQLite for BOMs/COCs (backend/storage/bomcoc.db),
-# and persistent volume storage for the Gemma model (not re-downloaded on restart).
+# Persistence is SQLite for BOMs/COCs (backend/storage/bomcoc.db). Semantic
+# extraction/validation calls out to forjinn.com (see BOMCOC_FORJINN_API_URL
+# above) rather than running a local model, so there's no model volume here.

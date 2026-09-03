@@ -16,11 +16,23 @@ class Settings(BaseSettings):
     api_key: str | None = None
     allowed_origins: list[str] = ["http://localhost:5173"]
     parse_timeout_seconds: int = 120
-    # Gemma-via-Ollama endpoint for semantic COC-vs-BOM validation.
-    # If unset, semantic validation is skipped (only fast rule-based checks run).
-    ollama_base_url: str | None = None
-    ollama_model: str = "gemma:7b"
-    ollama_timeout_seconds: int = 60
+    # forjinn.com-hosted flow (Qwen-based agent) that does both semantic
+    # field extraction (app/services/semantic_extractor.py) and semantic
+    # COC-vs-BOM comparison (app/services/semantic_validator.py) — same
+    # flow, two jobs, distinguished by the "task" field in the request
+    # payload (see forjinn_client.call_agent). The flow ID is part of the
+    # URL path itself, e.g.
+    # https://forjinn.com/api/v1/prediction/23715a87-e685-4ed3-9f07-98aeb705233a
+    # — set via BOMCOC_FORJINN_API_URL. If unset, extraction has nothing to
+    # call (extract_bom/extract_coc raise) and semantic validation is
+    # skipped (only fast rule-based checks run).
+    forjinn_api_url: str | None = None
+    forjinn_api_key: str | None = None
+    # 60s (a reasonable default for the small "validate" call) timed out in
+    # practice on a real "extract" call over a multi-row BOM table — an LLM
+    # reasoning over a full table needs more headroom than a single-item
+    # compliance verdict does.
+    forjinn_timeout_seconds: int = 180
 
     @property
     def upload_dir(self) -> Path:

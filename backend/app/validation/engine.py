@@ -66,6 +66,20 @@ def run_validation(
     COCs matched to the same BOM line, for partial-shipment quantity checks
     (see rules.check_quantity).
 
+    A field-comparison check (PO Number, Part ID, Model, Serial Number,
+    Quantity, COC Issue Date, Description, Manufacturer, Manufacturing
+    Year, Warranty Expiry) is skipped entirely — no row at all, not even a
+    WARNING — when the BOM side has nothing to compare against (no matched
+    line, or the matched line never captured that field). Reporting "no
+    BOM value to validate against" for every such field on an unmatched
+    COC used to bury the one row that actually matters (bom_match) under a
+    wall of noise; this way the report only ever shows a comparison that
+    could meaningfully pass, fail, or need review. Checks that don't
+    depend on a BOM value at all — identity-field presence, and the
+    presence-only compliance markers (signature, seal, test certificate,
+    authorization letter) — always run regardless, since they're purely
+    about what the COC itself contains.
+
     Returns a list of dicts: {rule_result, source_field}.
     """
     results: list[dict] = []
@@ -84,61 +98,65 @@ def run_validation(
         "source_field": None,
     })
 
-    results.append({
-        "rule_result": rules.check_exact_match("po_numbers", _bom_expected(bom_item, "po_numbers"), po_field.field_value if po_field else None, required=False),
-        "source_field": po_field,
-    })
+    for field_name, field in (("po_numbers", po_field), ("part_id", part_id_field), ("model", model_field), ("serial_numbers", serial_field)):
+        expected = _bom_expected(bom_item, field_name)
+        if not expected:
+            # BOM doesn't have this field (missing, or captured as an empty
+            # string) — nothing to compare, so nothing to report. Matches
+            # check_exact_match's own `if not expected` treatment of "".
+            continue
+        results.append({
+            "rule_result": rules.check_exact_match(field_name, expected, field.field_value if field else None, required=False),
+            "source_field": field,
+        })
 
-    results.append({
-        "rule_result": rules.check_exact_match("part_id", _bom_expected(bom_item, "part_id"), part_id_field.field_value if part_id_field else None, required=False),
-        "source_field": part_id_field,
-    })
+    expected_qty = _bom_expected_quantity(bom_item)
+    if expected_qty is not None:
+        results.append({
+            "rule_result": rules.check_quantity(expected_qty, qty_field.field_value if qty_field else None, previously_delivered_quantity),
+            "source_field": qty_field,
+        })
 
-    results.append({
-        "rule_result": rules.check_exact_match("model", _bom_expected(bom_item, "model"), model_field.field_value if model_field else None, required=False),
-        "source_field": model_field,
-    })
-
-    results.append({
-        "rule_result": rules.check_exact_match("serial_numbers", None, serial_field.field_value if serial_field else None, required=False),
-        "source_field": serial_field,
-    })
-
-    results.append({
-        "rule_result": rules.check_quantity(
-            _bom_expected_quantity(bom_item), qty_field.field_value if qty_field else None, previously_delivered_quantity
-        ),
-        "source_field": qty_field,
-    })
-
-    coc_date_field = _best_value(coc_fields, "coc_issue_date")
-    results.append({
-        "rule_result": rules.check_date_not_before(
-            "coc_issue_date", contract_date, coc_date_field.field_value if coc_date_field else None
-        ),
-        "source_field": coc_date_field,
-    })
+    if contract_date:
+        coc_date_field = _best_value(coc_fields, "coc_issue_date")
+        results.append({
+            "rule_result": rules.check_date_not_before(
+                "coc_issue_date", contract_date, coc_date_field.field_value if coc_date_field else None
+            ),
+            "source_field": coc_date_field,
+        })
 
     import_docs_field = _best_value(coc_fields, "import_documents")
     is_imported = parse_bool_flag(_bom_expected(bom_item, "is_imported"))
-    results.append({
-        "rule_result": rules.check_conditional_presence(
-            "import_documents", is_imported, import_docs_field.field_value if import_docs_field else None
-        ),
-        "source_field": import_docs_field,
-    })
+    # Skip only when there's genuinely nothing to say (BOM doesn't specify
+    # is_imported AND the COC has no import-document evidence either) —
+    # real evidence on the COC is still worth surfacing regardless of
+    # whether the BOM's is_imported flag exists.
+    if is_imported is not None or import_docs_field is not None:
+        results.append({
+            "rule_result": rules.check_conditional_presence(
+                "import_documents", is_imported, import_docs_field.field_value if import_docs_field else None
+            ),
+            "source_field": import_docs_field,
+        })
 
     for field_name in FUZZY_TEXT_FIELDS:
+        expected = _bom_expected(bom_item, field_name)
+        if not expected:
+            continue
         field = _best_value(coc_fields, field_name)
         results.append({
-            "rule_result": rules.check_fuzzy_match(field_name, _bom_expected(bom_item, field_name), field.field_value if field else None),
+            "rule_result": rules.check_fuzzy_match(field_name, expected, field.field_value if field else None),
             "source_field": field,
         })
 
     for field_name in EXACT_TEXT_FIELDS:
+        expected = _bom_expected(bom_item, field_name)
+        if not expected:
+            continue
         field = _best_value(coc_fields, field_name)
         results.append({
-            "rule_result": rules.check_exact_match(field_name, _bom_expected(bom_item, field_name), field.field_value if field else None, required=False),
+            "rule_result": rules.check_exact_match(field_name, expected, field.field_value if field else None, required=False),
             "source_field": field,
         })
 

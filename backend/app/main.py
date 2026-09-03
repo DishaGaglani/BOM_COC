@@ -137,7 +137,7 @@ async def api_upload_bom(
 ) -> BOM:
     document, _ = await _receive_and_parse(file, strategy)
     try:
-        bom = ingest_bom(project_id, document, contract_date=contract_date)
+        bom = await ingest_bom(project_id, document, contract_date=contract_date)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     logger.info(

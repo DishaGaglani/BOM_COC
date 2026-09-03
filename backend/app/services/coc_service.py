@@ -8,7 +8,7 @@ from app.parameters.extractor import extract_coc
 from app.parameters.schema import BOM, BOMItem, COC, Validation
 from app.parameters.storage import list_cocs_for_bom, save_coc
 from app.parsing.schema import ParsedDocument
-from app.services.gemma_validator import semantic_validate
+from app.services.semantic_validator import semantic_validate
 from app.validation.engine import run_validation
 from app.validation.matching import match_bom_item
 from app.validation.normalize import parse_quantity
@@ -52,7 +52,7 @@ def _previously_delivered_quantity(bom_id: str, matched_item_id: str) -> float:
 
 
 async def ingest_and_validate_coc(bom: BOM, document: ParsedDocument, source_pdf_path: Path) -> COC:
-    fields = extract_coc(document)
+    fields = await extract_coc(document)
     match = match_bom_item(bom.items, fields)
 
     previously_delivered = _previously_delivered_quantity(bom.bom_id, match.item.item_id) if match.item else 0.0
@@ -60,16 +60,16 @@ async def ingest_and_validate_coc(bom: BOM, document: ParsedDocument, source_pdf
     # Tier 1: fast rule-based validation (identity, format, date checks, etc.)
     fast_results = run_validation(match.item, fields, contract_date=bom.contract_date, previously_delivered_quantity=previously_delivered)
 
-    # Tier 2: semantic validation via Gemma (if configured and match succeeded)
-    # Gemma is only called after a successful match, since there's nothing to
-    # validate semantically against a non-existent BOM line.
-    gemma_results: list[dict] = []
+    # Tier 2: semantic validation via the forjinn agent (if configured and
+    # match succeeded). Only called after a successful match, since there's
+    # nothing to validate semantically against a non-existent BOM line.
+    semantic_results: list[dict] = []
     if match.item is not None and match.status == "matched":
-        gemma_results = await semantic_validate(match.item, fields, contract_date=bom.contract_date)
+        semantic_results = await semantic_validate(match.item, fields, contract_date=bom.contract_date)
 
-    # Combine fast + semantic results, with Gemma results appended so they're
-    # visible at the end of the report.
-    results = fast_results + gemma_results
+    # Combine fast + semantic results, with semantic results appended so
+    # they're visible at the end of the report.
+    results = fast_results + semantic_results
 
     # The field-by-field checks above already ran with "nothing to validate
     # against" for every BOM-sourced expected value when there's no single
