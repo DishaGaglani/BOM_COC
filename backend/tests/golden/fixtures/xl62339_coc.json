@@ -1,0 +1,16 @@
+{
+  "_source": "review/XL62339.pdf",
+  "_note": "Hand-verified against the document's own text on 2026-09-03: 'This is to certify that the material supplied by us against your purchase Order PO.NO. 06L038682 / ANIL POOJARI Dated : 15/09/2022 ... Item No, XL64073 ... Part No. 2CDS253001R0504 ... Make ABB ... Qty 15 ... Date : 10.11.2022 ... For Vashi Integrated Solutions Ltd'. part_id is correctly the customer's Item No. (XL64073), not the manufacturer's own Part No. (2CDS253001R0504, which lands under model instead) — see the part_id priority rule in the agent's system prompt. model is in optional_fields, not fields: confirmed across repeated live calls that the agent sometimes folds the manufacturer's part number into description instead of also emitting it as a separate model field — asserted only when present, not required.",
+  "fields": {
+    "po_numbers": "06L038682",
+    "part_id": "XL64073",
+    "manufacturer": "ABB",
+    "quantity": "15",
+    "coc_issue_date": "10.11.2022",
+    "contract_date": "15/09/2022"
+  },
+  "optional_fields": {
+    "model": "2CDS253001R0504"
+  },
+  "description_keyword": "Miniature Circuit Breaker"
+}

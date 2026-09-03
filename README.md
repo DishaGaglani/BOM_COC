@@ -154,19 +154,21 @@ real file path, not a blob — everything else is in `backend/storage/bomcoc.db`
 
 ### Known gaps
 
-- forjinn's response envelope and the "validate" task's response shape are both
-  confirmed against a real test call (unwrapped JSON directly at the top level; no
-  `Authorization` header needed against the current flow). The "extract" task's response
-  shape (`bom_items`/`coc_fields`/`contract_date` — see `semantic_extractor.py`) hasn't
-  been separately test-called yet — worth confirming before relying on a real BOM/COC
-  upload.
+- forjinn's response envelope is confirmed against real calls for both the "extract" and
+  "validate" tasks (unwrapped JSON directly at the top level under a `"text"` key,
+  itself a JSON *string* — `_unwrap_response` handles that; no `Authorization` header
+  needed against the current flow). The agent isn't temperature-0: repeated live calls
+  against the same document were observed to vary on borderline presence-only judgment
+  calls (e.g. whether a signature block counted as solid evidence) and on whether a
+  secondary identifier got echoed as its own field or folded into free text — see
+  `backend/tests/golden/README.md`'s "What's asserted, and what deliberately isn't" for
+  the full picture, and its "known, real extraction-accuracy gap" note on `contract_date`
+  currently picking up a document's internal approval date on at least one real BOM.
 - Extraction has no rule-based fallback — if forjinn is unreachable or misconfigured,
   BOM/COC ingestion fails outright rather than degrading to a lesser result.
-- Golden-file tests against the real samples in `review/` (through the actual
-  `unstructured` pipeline, not just fixtures) aren't built yet — see
-  `backend/tests/golden/README.md`.
-- `backend/tests/test_services.py`'s end-to-end suite is skipped pending the above —
-  see its module-level `pytestmark`.
+- Golden-file tests against the real samples in `review/` now cover `MDP BOM.pdf` and
+  `XL62339.pdf` (`backend/tests/golden/test_golden.py`) — the fuller set in `review/`
+  (`49COC.pdf`, `COC LETTER MCB.pdf`, `xh02020.pdf`) isn't fixtured yet.
 
 ## Running locally (dev machine, without Docker)
 

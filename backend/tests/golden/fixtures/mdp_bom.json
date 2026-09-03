@@ -1,0 +1,35 @@
+{
+  "_source": "review/MDP BOM.pdf",
+  "_note": "A representative subset (not every line item), hand-verified against the document's own text on 2026-09-03 — see the 'Description Desig. L&T CAT No. Make Part No. Country of Origin ...' table starting page 2. Only fields with low wording variance are checked exactly (identifiers, manufacturer, numeric/short categorical requirements); description is checked by keyword only, since the agent's free-text phrasing of it can legitimately vary run to run.",
+  "items": {
+    "XL19990": {
+      "manufacturer_contains": "SOURIAU",
+      "model": "MS3470-W18- 11PN",
+      "quantity": 12,
+      "description_keyword": "Pin contact",
+      "requirements": {
+        "country_of_origin": "India",
+        "grade": "MIL"
+      }
+    },
+    "XL62339": {
+      "manufacturer": "ABB",
+      "quantity": 12,
+      "description_keyword": "50A",
+      "requirements": {
+        "country_of_origin": "Germany",
+        "grade": "NSD"
+      }
+    },
+    "XL62091": {
+      "manufacturer": "ABB",
+      "model": "SB201M-C6",
+      "quantity": 12,
+      "description_keyword": "6A",
+      "requirements": {
+        "country_of_origin": "Germany",
+        "grade": "NSD"
+      }
+    }
+  }
+}
