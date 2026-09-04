@@ -56,8 +56,10 @@ happens to include the field) for any future field that turns out to need
 it — none currently do.
 
 Three extraction-accuracy gaps found while building this were fixed on
-2026-09-03 by editing the forjinn agent's system prompt directly (outside
-this repo — see `backend/forjinn_system_prompt*.txt` locally, gitignored):
+2026-09-03 by editing the forjinn agent's system prompt directly — outside
+this repo entirely; forjinn.com is the only source of truth for the live
+prompt (no local copy is kept — a stale one already caused a real
+regression once, see git history around 2026-09-04):
 - `contract_date` on `MDP BOM.pdf` was extracting as `28.03.2022` — the
   document's internal *"R00 Approved Date"* from its revision-approval
   table, not a contract/PO date (the document's own "Date :" field is

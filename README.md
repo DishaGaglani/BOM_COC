@@ -162,13 +162,23 @@ real file path, not a blob — everything else is in `backend/storage/bomcoc.db`
   calls (e.g. whether a signature block counted as solid evidence) and on whether a
   secondary identifier got echoed as its own field or folded into free text — see
   `backend/tests/golden/README.md`'s "What's asserted, and what deliberately isn't" for
-  the full picture, and its "known, real extraction-accuracy gap" note on `contract_date`
-  currently picking up a document's internal approval date on at least one real BOM.
+  the full picture and the fixes already made to the live prompt for specific accuracy
+  gaps found this way (`contract_date` picking up a document's internal approval date,
+  a COC `model` field flickering, a BOM's document-level SO number leaking into a line's
+  `po_number` — all confirmed fixed, not currently open).
+- A single COC table with unusually many rows (~40+, `review/xh02020.pdf`) made the agent
+  give up on per-row extraction in one call rather than partially completing.
+  `semantic_extractor.py` now splits an oversized table across multiple sequential agent
+  calls instead (see `MAX_TABLE_ROWS_PER_CALL`), merging the results — a document under
+  the limit still makes exactly the one call it always did. `forjinn_client.py` also
+  retries a transport-level failure (timeout, DNS/connect error) up to 3 times before
+  giving up a whole multi-call extraction over one transient blip.
 - Extraction has no rule-based fallback — if forjinn is unreachable or misconfigured,
   BOM/COC ingestion fails outright rather than degrading to a lesser result.
 - Golden-file tests against the real samples in `review/` now cover `MDP BOM.pdf` and
   `XL62339.pdf` (`backend/tests/golden/test_golden.py`) — the fuller set in `review/`
-  (`49COC.pdf`, `COC LETTER MCB.pdf`, `xh02020.pdf`) isn't fixtured yet.
+  (`49COC.pdf`, `COC LETTER MCB.pdf`, `xh02020.pdf`) isn't fixtured yet, so the large-table
+  chunking fix above hasn't been proven with a clean end-to-end live run.
 
 ## Running locally (dev machine, without Docker)
 
