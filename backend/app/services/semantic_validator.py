@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 from app.config import settings
 from app.services.forjinn_client import ForjinnNotConfigured, call_agent
+from app.validation.engine import bom_expected_value
 from app.validation.rules import RuleResult
 
 if TYPE_CHECKING:
@@ -80,7 +81,7 @@ async def semantic_validate(
             call_agent(payload),
             timeout=settings.forjinn_timeout_seconds,
         )
-        return _parse_agent_result(agent_result)
+        return _parse_agent_result(agent_result, bom_item)
 
     except ForjinnNotConfigured:
         return []
@@ -108,7 +109,7 @@ async def semantic_validate(
         ]
 
 
-def _parse_agent_result(agent_result: dict) -> list[dict]:
+def _parse_agent_result(agent_result: dict, bom_item: "BOMItem | None") -> list[dict]:
     passes = agent_result.get("passes_compliance")
     reasoning = agent_result.get("reasoning") or ""
     missing_or_conflicting = agent_result.get("missing_or_conflicting_fields") or []
@@ -123,7 +124,16 @@ def _parse_agent_result(agent_result: dict) -> list[dict]:
             "source_field": None,
         }
     ]
+    # A field the BOM itself never specifies a value for isn't something
+    # this COC can be "missing" or "conflicting" against — there's nothing
+    # to compare it to (matches engine.run_validation's own field-comparison
+    # skip, so the semantic layer can't flag a field the deterministic one
+    # already decided has nothing to validate against). The agent is asked
+    # not to do this in the first place (see the "validate" task's system
+    # prompt), but this is a hard guarantee, not a hope.
     for field_name in missing_or_conflicting:
+        if not bom_expected_value(bom_item, field_name):
+            continue
         results.append({
             "rule_result": RuleResult(
                 field_name, None, None, "WARNING",

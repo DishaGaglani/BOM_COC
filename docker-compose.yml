@@ -16,7 +16,7 @@ services:
       # Uncomment if forjinn's endpoint ends up requiring an API key —
       # unconfirmed as of writing (see forjinn_client.py's module docstring).
       # BOMCOC_FORJINN_API_KEY: change-me
-      BOMCOC_FORJINN_TIMEOUT_SECONDS: 180
+      BOMCOC_FORJINN_TIMEOUT_SECONDS: 300
     volumes:
       - ./backend:/app
     ports:

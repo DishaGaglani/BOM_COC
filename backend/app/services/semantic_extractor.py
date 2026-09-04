@@ -57,6 +57,65 @@ def _tables_as_rows(document: "ParsedDocument") -> list[dict]:
     return tables
 
 
+# A single table exceeding this many rows (header included) gets split
+# across multiple agent calls instead of sent whole — observed live against
+# a genuine 40+-row COC table (xh02020.pdf): asked to extract "every row"
+# from a table that large in one call, the agent silently gave up rather
+# than partially completing (0 rows extracted first attempt; only the
+# first 2 of ~40 on a second attempt after strengthening the prompt
+# further). Deliberately NOT set lower than this: a live experiment at 10
+# turned MDP BOM.pdf's extraction (2 of its 6 tables have 11/13 rows) from
+# 1 already-reliable call into 5, and the whole run took ~30 minutes before
+# hitting a transient network failure — more, smaller calls multiplies
+# exposure to exactly that kind of transient failure without addressing it
+# (see forjinn_client.call_agent's retry handling for the actual fix).
+# Tables within this limit are entirely unaffected — they still go out in
+# the single shared call exactly as before, so already-verified
+# small/medium documents (MDP BOM.pdf's 6 modest tables, every golden
+# fixture) see no behavior change.
+MAX_TABLE_ROWS_PER_CALL = 20
+
+
+def _chunk_table_rows(rows: list[list[str]]) -> list[list[list[str]]]:
+    """Splits one table's rows into pieces of at most MAX_TABLE_ROWS_PER_CALL,
+    each piece re-including rows[0] so a later piece isn't sent to the agent
+    as headerless data (rows[0] usually is the header; even when it isn't,
+    repeating it is harmless — the agent decides what it means, same as any
+    other row). A table within the limit returns unchanged as its only
+    piece — this is the branch every already-tested document takes."""
+    if len(rows) <= MAX_TABLE_ROWS_PER_CALL or len(rows) <= 1:
+        return [rows]
+    header, data = rows[0], rows[1:]
+    chunk_size = MAX_TABLE_ROWS_PER_CALL - 1  # reserve one slot for the repeated header
+    return [[header] + data[i : i + chunk_size] for i in range(0, len(data), chunk_size)]
+
+
+def _table_call_groups(document: "ParsedDocument") -> list[list[dict]]:
+    """Groups this document's tables into agent-call batches. Every table
+    that fits within MAX_TABLE_ROWS_PER_CALL is bundled into one shared
+    call — today's behavior, unchanged, since combining several small
+    tables into one call has never shown this failure mode (MDP BOM.pdf's
+    6 tables total ~21 line items and passes the golden suite reliably as a
+    single call). Only a table that alone exceeds the limit — the one
+    scenario actually observed to make the agent give up — is pulled out
+    into its own additional call(s), one per chunk, each labeled with a
+    suffixed table_id so overlapping bboxes from the same source table
+    don't get confused for different tables downstream."""
+    small_tables: list[dict] = []
+    extra_groups: list[list[dict]] = []
+
+    for table in _tables_as_rows(document):
+        pieces = _chunk_table_rows(table["rows"])
+        if len(pieces) == 1:
+            small_tables.append(table)
+            continue
+        for i, piece in enumerate(pieces, start=1):
+            extra_groups.append([{**table, "table_id": f"{table['table_id']}#chunk{i}", "rows": piece}])
+
+    groups = ([small_tables] if small_tables else []) + extra_groups
+    return groups or [[]]  # always at least one call, even for a prose-only document with no tables
+
+
 def _elements_as_text(document: "ParsedDocument") -> list[dict]:
     """Every non-table text element as id/page/bbox + text, instead of one
     flattened full_text blob — so a field the agent pulls from prose (e.g.
@@ -74,16 +133,18 @@ def _elements_as_text(document: "ParsedDocument") -> list[dict]:
     ]
 
 
-def build_extraction_payload(document: "ParsedDocument") -> dict:
-    """The structured input handed to the extraction agent: unstructured's
-    tables (as plain rows-of-cells, header row included) and text elements —
-    each carrying its own id/page/bbox — plus the canonical field set values
-    should be mapped onto. The agent should echo the source table's or
-    element's bbox verbatim on any field it extracts from it, so highlighting
-    downstream (see annotation/pdf_annotator.py) keeps working."""
+def build_extraction_payload(document: "ParsedDocument", tables: list[dict]) -> dict:
+    """The structured input handed to the extraction agent for one call:
+    `tables` (one batch from _table_call_groups — usually every table on
+    the document, but a lone oversized table's own chunk when one didn't
+    fit) plus the document's text elements — each carrying its own
+    id/page/bbox — plus the canonical field set values should be mapped
+    onto. The agent should echo the source table's or element's bbox
+    verbatim on any field it extracts from it, so highlighting downstream
+    (see annotation/pdf_annotator.py) keeps working."""
     return {
         "filename": document.filename,
-        "tables": _tables_as_rows(document),
+        "tables": tables,
         "elements": _elements_as_text(document),
         "canonical_fields": CANONICAL_FIELDS,
     }
@@ -152,57 +213,75 @@ async def _call_agent(payload: dict) -> dict:
     return await call_agent({"task": "extract", **payload})
 
 
+def _coerce_bom_item(item: dict) -> BOMItem:
+    fields = {k: v for k, v in item.items() if k != "item_id"}
+    # See _coerce_str — the agent's requirements values aren't reliably
+    # strings even though BOMItem.requirements is dict[str, str].
+    fields["requirements"] = {
+        key: _coerce_str(value)
+        for key, value in (fields.get("requirements") or {}).items()
+        if value is not None
+    }
+    try:
+        return BOMItem(item_id=item.get("item_id") or _new_item_id(), **fields)
+    except ValidationError as exc:
+        raise AgentResponseError(
+            f"extraction agent returned a BOM line item (part_id={fields.get('part_id')!r}) "
+            f"that doesn't match the expected shape: {_summarize_validation_error(exc)}"
+        ) from exc
+
+
+def _coerce_extracted_field(raw: dict) -> "ExtractedField | None":
+    # field_value is required (not Optional) on ExtractedField — a field
+    # with no usable value isn't evidence of anything, so it's dropped
+    # rather than defaulting to "" (which would render as a false positive
+    # presence checkmark downstream).
+    field_value = _coerce_str(raw.get("field_value"))
+    if not field_value:
+        return None
+    try:
+        return ExtractedField(**{
+            **raw,
+            "field_value": field_value,
+            "raw_label": _coerce_str(raw.get("raw_label")),
+            # extraction_method is always "semantic" for everything this
+            # pipeline produces (see ExtractionMethod in parameters/schema.py)
+            # — set here rather than asking the agent to repeat a constant on
+            # every field.
+            "extraction_method": "semantic",
+        })
+    except ValidationError as exc:
+        raise AgentResponseError(
+            f"extraction agent returned a COC field (field_name={raw.get('field_name')!r}) "
+            f"that doesn't match the expected shape: {_summarize_validation_error(exc)}"
+        ) from exc
+
+
 async def extract_bom(document: "ParsedDocument") -> tuple[list[BOMItem], str | None]:
     """Returns (line items, contract_date), both sourced from the agent's
-    read of the document — see module docstring."""
-    result = await _call_agent(build_extraction_payload(document))
-    items = []
-    for item in result.get("bom_items", []):
-        fields = {k: v for k, v in item.items() if k != "item_id"}
-        # See _coerce_str — the agent's requirements values aren't reliably
-        # strings even though BOMItem.requirements is dict[str, str].
-        fields["requirements"] = {
-            key: _coerce_str(value)
-            for key, value in (fields.get("requirements") or {}).items()
-            if value is not None
-        }
-        try:
-            items.append(BOMItem(item_id=item.get("item_id") or _new_item_id(), **fields))
-        except ValidationError as exc:
-            raise AgentResponseError(
-                f"extraction agent returned a BOM line item (part_id={fields.get('part_id')!r}) "
-                f"that doesn't match the expected shape: {_summarize_validation_error(exc)}"
-            ) from exc
-    return items, result.get("contract_date")
+    read of the document — see module docstring. A document whose tables
+    don't all fit in one call (see _table_call_groups/MAX_TABLE_ROWS_PER_CALL)
+    is sent across multiple sequential agent calls instead, one per group,
+    with every call's bom_items concatenated into the final result — a
+    document under the limit still makes exactly the one call it always
+    did."""
+    items: list[BOMItem] = []
+    contract_date: str | None = None
+    for tables_group in _table_call_groups(document):
+        result = await _call_agent(build_extraction_payload(document, tables_group))
+        items.extend(_coerce_bom_item(item) for item in result.get("bom_items", []))
+        if contract_date is None:
+            contract_date = result.get("contract_date")
+    return items, contract_date
 
 
 async def extract_coc(document: "ParsedDocument") -> list[ExtractedField]:
-    result = await _call_agent(build_extraction_payload(document))
-    fields = []
-    for raw in result.get("coc_fields", []):
-        # field_value is required (not Optional) on ExtractedField — a field
-        # with no usable value isn't evidence of anything, so it's dropped
-        # rather than defaulting to "" (which would render as a false
-        # positive presence checkmark downstream).
-        field_value = _coerce_str(raw.get("field_value"))
-        if not field_value:
-            continue
-        try:
-            fields.append(ExtractedField(**{
-                **raw,
-                "field_value": field_value,
-                "raw_label": _coerce_str(raw.get("raw_label")),
-                # extraction_method is always "semantic" for everything this
-                # pipeline produces (see ExtractionMethod in parameters/schema.py)
-                # — set here rather than asking the agent to repeat a constant on
-                # every field.
-                "extraction_method": "semantic",
-            }))
-        except ValidationError as exc:
-            raise AgentResponseError(
-                f"extraction agent returned a COC field (field_name={raw.get('field_name')!r}) "
-                f"that doesn't match the expected shape: {_summarize_validation_error(exc)}"
-            ) from exc
+    """See extract_bom — same multi-call-and-merge behavior for a document
+    whose tables exceed one call's row budget."""
+    fields: list[ExtractedField] = []
+    for tables_group in _table_call_groups(document):
+        result = await _call_agent(build_extraction_payload(document, tables_group))
+        fields.extend(f for raw in result.get("coc_fields", []) if (f := _coerce_extracted_field(raw)) is not None)
     return fields
 
 

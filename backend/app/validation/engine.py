@@ -28,7 +28,7 @@ def _best_value(fields: "list[ExtractedField]", field_name: str) -> "ExtractedFi
     return max(matches, key=lambda f: f.confidence)
 
 
-def _bom_expected(bom_item: "BOMItem | None", field_name: str) -> str | None:
+def bom_expected_value(bom_item: "BOMItem | None", field_name: str) -> str | None:
     """Dedicated BOMItem attributes cover part_id/description/manufacturer/
     model/quantity/po_number; anything else (YOM, warranty, issue date...)
     only exists if that column was present on this particular BOM, captured
@@ -99,7 +99,7 @@ def run_validation(
     })
 
     for field_name, field in (("po_numbers", po_field), ("part_id", part_id_field), ("model", model_field), ("serial_numbers", serial_field)):
-        expected = _bom_expected(bom_item, field_name)
+        expected = bom_expected_value(bom_item, field_name)
         if not expected:
             # BOM doesn't have this field (missing, or captured as an empty
             # string) — nothing to compare, so nothing to report. Matches
@@ -127,7 +127,7 @@ def run_validation(
         })
 
     import_docs_field = _best_value(coc_fields, "import_documents")
-    is_imported = parse_bool_flag(_bom_expected(bom_item, "is_imported"))
+    is_imported = parse_bool_flag(bom_expected_value(bom_item, "is_imported"))
     # Skip only when there's genuinely nothing to say (BOM doesn't specify
     # is_imported AND the COC has no import-document evidence either) —
     # real evidence on the COC is still worth surfacing regardless of
@@ -141,7 +141,7 @@ def run_validation(
         })
 
     for field_name in FUZZY_TEXT_FIELDS:
-        expected = _bom_expected(bom_item, field_name)
+        expected = bom_expected_value(bom_item, field_name)
         if not expected:
             continue
         field = _best_value(coc_fields, field_name)
@@ -151,7 +151,7 @@ def run_validation(
         })
 
     for field_name in EXACT_TEXT_FIELDS:
-        expected = _bom_expected(bom_item, field_name)
+        expected = bom_expected_value(bom_item, field_name)
         if not expected:
             continue
         field = _best_value(coc_fields, field_name)

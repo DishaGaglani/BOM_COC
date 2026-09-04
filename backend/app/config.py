@@ -29,10 +29,12 @@ class Settings(BaseSettings):
     forjinn_api_url: str | None = None
     forjinn_api_key: str | None = None
     # 60s (a reasonable default for the small "validate" call) timed out in
-    # practice on a real "extract" call over a multi-row BOM table — an LLM
-    # reasoning over a full table needs more headroom than a single-item
-    # compliance verdict does.
-    forjinn_timeout_seconds: int = 180
+    # practice on a real "extract" call over a multi-row BOM table; 180s
+    # still timed out on a single ~20-row table chunk (see
+    # semantic_extractor.MAX_TABLE_ROWS_PER_CALL) — extraction reasoning
+    # over a real table apparently needs more headroom than either of
+    # those, even after that table's own size is already capped per call.
+    forjinn_timeout_seconds: int = 300
 
     @property
     def upload_dir(self) -> Path:

@@ -18,8 +18,17 @@ forjinn's prediction endpoint wraps the agent's structured reply as a JSON
 _unwrap_response handles that — "answer"/"output" are also tried, and the
 raw envelope is the final fallback, in case a differently-configured flow
 ends up shaped differently.
+
+call_agent retries a transport-level failure (timeout, DNS/connect error)
+a couple of times before giving up — observed live during a long sequence
+of chunked extraction calls (semantic_extractor.py splits an oversized
+table across several calls): one call in the middle of that sequence hit
+httpx.ConnectError, which failed the entire request even though every
+other call in that same sequence had already succeeded. A single transient
+network blip shouldn't have to cost re-running the whole document.
 """
 
+import asyncio
 import json
 import logging
 
@@ -28,6 +37,13 @@ import httpx
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Retried only for transport-level failures (timeout, DNS/connect error) —
+# never for a real response from forjinn (a 4xx/5xx via raise_for_status())
+# since that's a signal worth surfacing immediately, not masking behind a
+# retry that will likely fail identically.
+_MAX_ATTEMPTS = 3
+_RETRY_BACKOFF_SECONDS = [2, 5]  # between attempt 1->2 and 2->3
 
 
 class ForjinnNotConfigured(Exception):
@@ -64,8 +80,9 @@ async def call_agent(payload: dict) -> dict:
     """Sends payload (task-specific dict built by the caller) to the
     configured forjinn.com flow and returns the agent's parsed structured
     reply. Raises ForjinnNotConfigured if forjinn_api_url is unset, or
-    httpx.HTTPError/ValueError on a transport, envelope, or parse failure —
-    callers decide how to degrade, this function doesn't guess for them."""
+    httpx.HTTPError/ValueError on a transport, envelope, or parse failure
+    that survives retrying — callers decide how to degrade from there, this
+    function doesn't guess for them."""
     if not settings.forjinn_api_url:
         raise ForjinnNotConfigured("forjinn_api_url is not set")
 
@@ -75,7 +92,21 @@ async def call_agent(payload: dict) -> dict:
 
     body = {"question": json.dumps(payload)}
 
-    async with httpx.AsyncClient(timeout=settings.forjinn_timeout_seconds) as client:
-        response = await client.post(settings.forjinn_api_url, json=body, headers=headers)
-        response.raise_for_status()
-        return _unwrap_response(response.json())
+    last_exc: Exception | None = None
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        try:
+            async with httpx.AsyncClient(timeout=settings.forjinn_timeout_seconds) as client:
+                response = await client.post(settings.forjinn_api_url, json=body, headers=headers)
+                response.raise_for_status()
+                return _unwrap_response(response.json())
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            last_exc = exc
+            if attempt < _MAX_ATTEMPTS:
+                backoff = _RETRY_BACKOFF_SECONDS[attempt - 1]
+                logger.warning(
+                    "forjinn call failed (attempt %d/%d, %s) — retrying in %ds",
+                    attempt, _MAX_ATTEMPTS, type(exc).__name__, backoff,
+                )
+                await asyncio.sleep(backoff)
+
+    raise last_exc
