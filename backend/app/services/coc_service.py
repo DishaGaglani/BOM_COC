@@ -5,11 +5,11 @@ from pathlib import Path
 from app.annotation.pdf_annotator import annotate_pdf
 from app.config import settings
 from app.parameters.extractor import extract_coc
-from app.parameters.schema import BOM, BOMItem, COC, Validation
+from app.parameters.schema import BOM, BOMItem, COC, ExtractedField, Validation
 from app.parameters.storage import list_cocs_for_bom, save_coc
 from app.parsing.schema import ParsedDocument
 from app.services.semantic_validator import semantic_validate
-from app.validation.engine import run_validation
+from app.validation.engine import bom_expected_value, run_validation
 from app.validation.matching import match_bom_item
 from app.validation.normalize import parse_quantity
 from app.validation.rules import RuleResult
@@ -49,6 +49,18 @@ def _previously_delivered_quantity(bom_id: str, matched_item_id: str) -> float:
             if qty is not None:
                 total += qty
     return total
+
+
+def _fields_mentioned_in_bom(bom_item: "BOMItem | None", fields: list[ExtractedField]) -> list[ExtractedField]:
+    """The COC record's own `fields` list (returned by the API, distinct
+    from `validations`) is meant to reflect what this COC has to say about
+    the BOM it was checked against — not everything the extraction agent
+    happened to notice on the page. A field the matched BOM line never
+    specifies a value for isn't something to report here, same rule
+    bom_expected_value already applies to comparisons in engine.py and
+    semantic_validator.py. An unmatched COC (bom_item is None) mentions
+    nothing the BOM specifies by definition, so it keeps no fields."""
+    return [f for f in fields if bom_expected_value(bom_item, f.field_name)]
 
 
 async def ingest_and_validate_coc(bom: BOM, document: ParsedDocument, source_pdf_path: Path) -> COC:
@@ -101,7 +113,7 @@ async def ingest_and_validate_coc(bom: BOM, document: ParsedDocument, source_pdf
         parsed_document_id=document.document_id,
         filename=document.filename,
         matched_item_id=match.item.item_id if match.item else None,
-        fields=fields,
+        fields=_fields_mentioned_in_bom(match.item, fields),
         validations=validations,
     )
     save_coc(coc)
