@@ -22,6 +22,7 @@ comparison — see services/semantic_validator.py — via the same
 forjinn_client.call_agent transport, distinguished by the "task" field below.
 """
 
+import asyncio
 from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
@@ -261,14 +262,17 @@ async def extract_bom(document: "ParsedDocument") -> tuple[list[BOMItem], str | 
     """Returns (line items, contract_date), both sourced from the agent's
     read of the document — see module docstring. A document whose tables
     don't all fit in one call (see _table_call_groups/MAX_TABLE_ROWS_PER_CALL)
-    is sent across multiple sequential agent calls instead, one per group,
-    with every call's bom_items concatenated into the final result — a
-    document under the limit still makes exactly the one call it always
-    did."""
+    is sent across multiple agent calls instead, one per group, run
+    concurrently since each group is an independent row-slice with nothing
+    to share until the results are merged — a document under the limit
+    still makes exactly the one call it always did. Every call's bom_items
+    is concatenated into the final result, in group order (asyncio.gather
+    preserves input order regardless of completion order)."""
+    groups = _table_call_groups(document)
+    results = await asyncio.gather(*(_call_agent(build_extraction_payload(document, group)) for group in groups))
     items: list[BOMItem] = []
     contract_date: str | None = None
-    for tables_group in _table_call_groups(document):
-        result = await _call_agent(build_extraction_payload(document, tables_group))
+    for result in results:
         items.extend(_coerce_bom_item(item) for item in result.get("bom_items", []))
         if contract_date is None:
             contract_date = result.get("contract_date")
@@ -276,11 +280,12 @@ async def extract_bom(document: "ParsedDocument") -> tuple[list[BOMItem], str | 
 
 
 async def extract_coc(document: "ParsedDocument") -> list[ExtractedField]:
-    """See extract_bom — same multi-call-and-merge behavior for a document
-    whose tables exceed one call's row budget."""
+    """See extract_bom — same concurrent-calls-merged-in-order behavior for
+    a document whose tables exceed one call's row budget."""
+    groups = _table_call_groups(document)
+    results = await asyncio.gather(*(_call_agent(build_extraction_payload(document, group)) for group in groups))
     fields: list[ExtractedField] = []
-    for tables_group in _table_call_groups(document):
-        result = await _call_agent(build_extraction_payload(document, tables_group))
+    for result in results:
         fields.extend(f for raw in result.get("coc_fields", []) if (f := _coerce_extracted_field(raw)) is not None)
     return fields
 
