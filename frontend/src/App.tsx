@@ -12,6 +12,14 @@ function overallStatus(coc: COC): "PASS" | "FAIL" | "WARNING" {
   return "PASS";
 }
 
+// A COC check can take several minutes (live semantic extraction +
+// validation calls) — long enough that a user will reasonably reload the
+// page or navigate away mid-check. The backend keeps processing regardless
+// of the client, so we persist which BOM was open and re-select it on
+// mount, refetching its COC list, instead of losing your place and making
+// an already-finished check look like it vanished.
+const SELECTED_BOM_KEY = "bomcoc.selectedBomId";
+
 function App() {
   const [boms, setBoms] = useState<BOM[]>([]);
   const [selectedBom, setSelectedBom] = useState<BOM | null>(null);
@@ -19,24 +27,38 @@ function App() {
   const [loadingCocs, setLoadingCocs] = useState(false);
   const [libraryError, setLibraryError] = useState<string | null>(null);
 
-  useEffect(() => {
-    listBOMs()
-      .then(setBoms)
-      .catch((err) => setLibraryError(err instanceof Error ? err.message : "Couldn't reach the backend."));
-  }, []);
-
-  const selectBom = (bom: BOM) => {
-    setSelectedBom(bom);
+  const refreshCocs = (bomId: string) => {
     setLoadingCocs(true);
-    listCOCs(bom.bom_id)
+    return listCOCs(bomId)
       .then(setCocs)
       .catch(() => setCocs([]))
       .finally(() => setLoadingCocs(false));
   };
 
+  useEffect(() => {
+    listBOMs()
+      .then((fetched) => {
+        setBoms(fetched);
+        const persistedId = localStorage.getItem(SELECTED_BOM_KEY);
+        const persisted = persistedId ? fetched.find((b) => b.bom_id === persistedId) : undefined;
+        if (persisted) {
+          setSelectedBom(persisted);
+          refreshCocs(persisted.bom_id);
+        }
+      })
+      .catch((err) => setLibraryError(err instanceof Error ? err.message : "Couldn't reach the backend."));
+  }, []);
+
+  const selectBom = (bom: BOM) => {
+    setSelectedBom(bom);
+    localStorage.setItem(SELECTED_BOM_KEY, bom.bom_id);
+    refreshCocs(bom.bom_id);
+  };
+
   const backToLibrary = () => {
     setSelectedBom(null);
     setCocs([]);
+    localStorage.removeItem(SELECTED_BOM_KEY);
   };
 
   const counts = cocs.reduce(
@@ -99,7 +121,12 @@ function App() {
           {!loadingCocs && cocs.length > 0 && (
             <section className="results-section">
               <div className="ledger-results__head">
-                <h2>Results</h2>
+                <div className="ledger-results__title">
+                  <h2>Results</h2>
+                  <button type="button" className="btn btn--ghost" onClick={() => refreshCocs(selectedBom.bom_id)} disabled={loadingCocs}>
+                    {loadingCocs ? "Refreshing…" : "↻ Refresh"}
+                  </button>
+                </div>
                 <div className="stat-strip">
                   <div className="stat">
                     <span className="stat__count">{cocs.length}</span>
@@ -129,7 +156,12 @@ function App() {
           )}
 
           {!loadingCocs && cocs.length === 0 && (
-            <p className="step__waiting results-section">No certificates checked against this BOM yet. Add one above.</p>
+            <p className="step__waiting results-section">
+              No certificates checked against this BOM yet. Add one above.{" "}
+              <button type="button" className="btn btn--ghost" onClick={() => refreshCocs(selectedBom.bom_id)}>
+                ↻ Refresh
+              </button>
+            </p>
           )}
         </>
       )}

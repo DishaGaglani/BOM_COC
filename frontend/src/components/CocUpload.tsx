@@ -56,6 +56,13 @@ export default function CocUpload({ bom, onCocsValidated }: { bom: BOM; onCocsVa
       <button type="submit" className="btn" disabled={loading || files.length === 0}>
         {loading ? "Checking…" : `Check ${files.length || ""} certificate${files.length === 1 ? "" : "s"}`}
       </button>
+      {loading && (
+        <p className="panel__hint">
+          Semantic extraction + validation can take a few minutes per certificate, longer for large tables. It's
+          safe to navigate away or reload — the check keeps running, and you'll find the result here (use Refresh
+          if it doesn't appear right away).
+        </p>
+      )}
       {error && <p className="error">{error}</p>}
     </form>
   );

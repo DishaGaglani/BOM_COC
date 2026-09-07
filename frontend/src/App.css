@@ -389,6 +389,12 @@
   margin-bottom: 18px;
 }
 
+.ledger-results__title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .ledger-results {
   display: flex;
   flex-direction: column;
