@@ -52,7 +52,10 @@ class Settings(BaseSettings):
         their own subdirectory."""
         return self.storage_dir / self.db_filename
 
-    model_config = SettingsConfigDict(env_prefix="BOMCOC_")
+    # Reads backend/.env if present (e.g. BOMCOC_FORJINN_API_URL), so a plain
+    # `uvicorn app.main:app --reload` picks it up without exporting it by
+    # hand every session — an actual environment variable still overrides it.
+    model_config = SettingsConfigDict(env_prefix="BOMCOC_", env_file=".env", env_file_encoding="utf-8")
 
 
 settings = Settings()

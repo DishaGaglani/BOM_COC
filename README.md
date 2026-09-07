@@ -193,6 +193,10 @@ pip install ./vendor/fake-pycrypto
 pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
+Copy `backend/.env.example` to `backend/.env` (gitignored, same as
+`frontend/.env`) to set `BOMCOC_FORJINN_API_URL` once — `app/config.py`'s
+`Settings` loads `.env` automatically, so extraction works without exporting
+it by hand every session. A real environment variable still overrides it.
 
 Try it without the API, directly against a sample file:
 ```
